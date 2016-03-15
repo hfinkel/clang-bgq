@@ -447,6 +447,8 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
     StringRef Name = A->getValue();
     if (Name == "Accelerate")
       Opts.setVecLib(CodeGenOptions::Accelerate);
+    else if (Name == "SLEEF")
+      Opts.setVecLib(CodeGenOptions::SLEEF);
     else if (Name == "none")
       Opts.setVecLib(CodeGenOptions::NoLibrary);
     else
@@ -1948,7 +1950,7 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
 
 static void ParsePreprocessorArgs(PreprocessorOptions &Opts, ArgList &Args,
                                   FileManager &FileMgr,
-                                  DiagnosticsEngine &Diags) {
+                                  DiagnosticsEngine &Diags, InputKind DashX) {
   using namespace options;
   Opts.ImplicitPCHInclude = Args.getLastArgValue(OPT_include_pch);
   Opts.ImplicitPTHInclude = Args.getLastArgValue(OPT_include_pth);
@@ -2000,6 +2002,14 @@ static void ParsePreprocessorArgs(PreprocessorOptions &Opts, ArgList &Args,
   // Include 'altivec.h' if -faltivec option present
   if (Args.hasArg(OPT_faltivec))
     Opts.Includes.emplace_back("altivec.h");
+
+  if (Args.getLastArgValue(OPT_target_cpu) == "a2q" &&
+      !Args.hasArg(OPT_mno_qpx)) {
+    if (DashX == IK_C || DashX == IK_CXX ||
+        DashX == IK_ObjC || DashX == IK_ObjCXX ||
+        DashX == IK_OpenCL || DashX == IK_CUDA)
+      Opts.Includes.push_back("qpxintrin.h");
+  }
 
   for (const Arg *A : Args.filtered(OPT_remap_file)) {
     std::pair<StringRef, StringRef> Split = StringRef(A->getValue()).split(';');
@@ -2158,7 +2168,7 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
   // ParsePreprocessorArgs and remove the FileManager
   // parameters from the function and the "FileManager.h" #include.
   FileManager FileMgr(Res.getFileSystemOpts());
-  ParsePreprocessorArgs(Res.getPreprocessorOpts(), Args, FileMgr, Diags);
+  ParsePreprocessorArgs(Res.getPreprocessorOpts(), Args, FileMgr, Diags, DashX);
   ParsePreprocessorOutputArgs(Res.getPreprocessorOutputOpts(), Args,
                               Res.getFrontendOpts().ProgramAction);
   return Success;

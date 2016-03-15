@@ -3437,7 +3437,8 @@ static Distro DetectDistro(const Driver &D, llvm::Triple::ArchType Arch) {
                       .Case("wily", UbuntuWily)
                       .Case("xenial", UbuntuXenial)
                       .Default(UnknownDistro);
-    return Version;
+    if (Version != UnknownDistro)
+      return Version;
   }
 
   File = llvm::MemoryBuffer::getFile("/etc/redhat-release");
@@ -4118,6 +4119,27 @@ void Linux::AddCudaIncludeArgs(const ArgList &DriverArgs,
     CC1Args.push_back("-include");
     CC1Args.push_back("__clang_cuda_runtime_wrapper.h");
   }
+}
+
+void Linux::AddCXXStdlibLibArgs(const ArgList &Args,
+                                ArgStringList &CmdArgs) const {
+  if (getTriple().getVendor() != llvm::Triple::BGQ) {
+    Generic_ELF::AddCXXStdlibLibArgs(Args, CmdArgs);
+    return;
+  }
+
+  if (GetCXXStdlibType(Args) == ToolChain::CST_Libcxx) {
+    CmdArgs.push_back("-lc++");
+
+    // For static linking, we also need to explicitly link to libstdc++
+    // for the cxxabi exception objects.
+    if (Args.hasArg(options::OPT_static)) {
+      CmdArgs.push_back("-lrt");
+      CmdArgs.push_back("-lpthread");
+    }
+  }
+
+  CmdArgs.push_back("-lstdc++");
 }
 
 bool Linux::isPIEDefault() const { return getSanitizerArgs().requiresPIE(); }

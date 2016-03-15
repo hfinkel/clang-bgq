@@ -51,7 +51,8 @@ public:
 
   enum VectorLibrary {
     NoLibrary, // Don't use any vector library.
-    Accelerate // Use the Accelerate framework.
+    Accelerate, // Use the Accelerate framework.
+    SLEEF // SLEEF SIMD library (BG/Q port)
   };
 
   enum ObjCDispatchMethodKind {
