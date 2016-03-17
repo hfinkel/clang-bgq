@@ -3754,23 +3754,27 @@ Linux::Linux(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
   // those searched.
   // FIXME: It's not clear whether we should use the driver's installed
   // directory ('Dir' below) or the ResourceDir.
-  if (StringRef(D.Dir).startswith(SysRoot)) {
-    addPathIfExists(D, D.Dir + "/../lib/" + MultiarchTriple, Paths);
-    addPathIfExists(D, D.Dir + "/../" + OSLibDir, Paths);
-  }
+  if (getTriple().getVendor() != llvm::Triple::BGQ) {
+    if (StringRef(D.Dir).startswith(SysRoot)) {
+      addPathIfExists(D, D.Dir + "/../lib/" + MultiarchTriple, Paths);
+      addPathIfExists(D, D.Dir + "/../" + OSLibDir, Paths);
+    }
 
-  addPathIfExists(D, SysRoot + "/lib/" + MultiarchTriple, Paths);
-  addPathIfExists(D, SysRoot + "/lib/../" + OSLibDir, Paths);
-  addPathIfExists(D, SysRoot + "/usr/lib/" + MultiarchTriple, Paths);
-  addPathIfExists(D, SysRoot + "/usr/lib/../" + OSLibDir, Paths);
+    addPathIfExists(D, SysRoot + "/lib/" + MultiarchTriple, Paths);
+    addPathIfExists(D, SysRoot + "/lib/../" + OSLibDir, Paths);
+    addPathIfExists(D, SysRoot + "/usr/lib/" + MultiarchTriple, Paths);
+    addPathIfExists(D, SysRoot + "/usr/lib/../" + OSLibDir, Paths);
+  }
 
   // Try walking via the GCC triple path in case of biarch or multiarch GCC
   // installations with strange symlinks.
   if (GCCInstallation.isValid()) {
-    addPathIfExists(D,
-                    SysRoot + "/usr/lib/" + GCCInstallation.getTriple().str() +
-                        "/../../" + OSLibDir,
-                    Paths);
+    if (getTriple().getVendor() != llvm::Triple::BGQ)
+      addPathIfExists(D,
+                      SysRoot + "/usr/lib/" +
+                          GCCInstallation.getTriple().str() +
+                          "/../../" + OSLibDir,
+                      Paths);
 
     // Add the 'other' biarch variant path
     Multilib BiarchSibling;
@@ -3800,11 +3804,13 @@ Linux::Linux(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
   // searched.
   // FIXME: It's not clear whether we should use the driver's installed
   // directory ('Dir' below) or the ResourceDir.
-  if (StringRef(D.Dir).startswith(SysRoot))
-    addPathIfExists(D, D.Dir + "/../lib", Paths);
+  if (getTriple().getVendor() != llvm::Triple::BGQ) {
+    if (StringRef(D.Dir).startswith(SysRoot))
+      addPathIfExists(D, D.Dir + "/../lib", Paths);
 
-  addPathIfExists(D, SysRoot + "/lib", Paths);
-  addPathIfExists(D, SysRoot + "/usr/lib", Paths);
+    addPathIfExists(D, SysRoot + "/lib", Paths);
+    addPathIfExists(D, SysRoot + "/usr/lib", Paths);
+  }
 }
 
 bool Linux::HasNativeLLVMSupport() const { return true; }
@@ -3853,7 +3859,8 @@ void Linux::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
   if (DriverArgs.hasArg(options::OPT_nostdinc))
     return;
 
-  if (!DriverArgs.hasArg(options::OPT_nostdlibinc))
+  if (!DriverArgs.hasArg(options::OPT_nostdlibinc) &&
+      getTriple().getVendor() != llvm::Triple::BGQ)
     addSystemInclude(DriverArgs, CC1Args, SysRoot + "/usr/local/include");
 
   if (!DriverArgs.hasArg(options::OPT_nobuiltininc)) {
@@ -4005,7 +4012,8 @@ void Linux::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
     }
   }
 
-  if (getTriple().getOS() == llvm::Triple::RTEMS)
+  if (getTriple().getOS() == llvm::Triple::RTEMS ||
+      getTriple().getVendor() == llvm::Triple::BGQ)
     return;
 
   // Add an include of '/include' directly. This isn't provided by default by
