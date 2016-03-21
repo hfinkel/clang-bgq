@@ -3376,7 +3376,7 @@ public:
   StmtResult BuildCXXForRangeStmt(SourceLocation ForLoc,
                                   SourceLocation CoawaitLoc,
                                   SourceLocation ColonLoc,
-                                  Stmt *RangeDecl, Stmt *BeginEndDecl,
+                                  Stmt *RangeDecl, Stmt *Begin, Stmt *End,
                                   Expr *Cond, Expr *Inc,
                                   Stmt *LoopVarDecl,
                                   SourceLocation RParenLoc,
@@ -4623,7 +4623,8 @@ public:
   /// \return returns 'true' if failed, 'false' if success.
   bool CheckCXXThisCapture(SourceLocation Loc, bool Explicit = false, 
       bool BuildAndDiagnose = true,
-      const unsigned *const FunctionScopeIndexToStopAt = nullptr);
+      const unsigned *const FunctionScopeIndexToStopAt = nullptr,
+      bool ByCopy = false);
 
   /// \brief Determine whether the given type is the type of *this that is used
   /// outside of the body of a member function for a type that is currently
