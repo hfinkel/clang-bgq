@@ -189,6 +189,7 @@ public:
   /// [self foo].prop   | 0 (unknown)         | prop (ObjCPropertyDecl)
   /// self.prop1.prop2  | prop1 (ObjCPropertyDecl)    | prop2 (ObjCPropertyDecl)
   /// MyClass.prop      | MyClass (ObjCInterfaceDecl) | -prop (ObjCMethodDecl)
+  /// MyClass.foo.prop  | +foo (ObjCMethodDecl)       | -prop (ObjCPropertyDecl)
   /// weakVar           | 0 (known)           | weakVar (VarDecl)
   /// self->weakIvar    | self (VarDecl)      | weakIvar (ObjCIvarDecl)
   ///
@@ -422,11 +423,6 @@ public:
     enum CaptureKind {
       Cap_ByCopy, Cap_ByRef, Cap_Block, Cap_VLA
     };
-    /// Expression to initialize a field of the given type, and the kind of
-    /// capture (if this is a capture and not an init-capture). The expression
-    /// is only required if we are capturing ByVal and the variable's type has
-    /// a non-trivial copy constructor.
-    llvm::PointerIntPair<void *, 2, CaptureKind> InitExprAndCaptureKind;
     enum {
       IsNestedCapture = 0x1,
       IsThisCaptured = 0x2
@@ -434,7 +430,12 @@ public:
     /// The variable being captured (if we are not capturing 'this') and whether
     /// this is a nested capture, and whether we are capturing 'this'
     llvm::PointerIntPair<VarDecl*, 2> VarAndNestedAndThis;
-
+    /// Expression to initialize a field of the given type, and the kind of
+    /// capture (if this is a capture and not an init-capture). The expression
+    /// is only required if we are capturing ByVal and the variable's type has
+    /// a non-trivial copy constructor.
+    llvm::PointerIntPair<void *, 2, CaptureKind> InitExprAndCaptureKind;
+    
     /// \brief The source location at which the first capture occurred.
     SourceLocation Loc;
 

@@ -260,6 +260,29 @@ only a single candidate. In a call to g(1, 1), the call is ambiguous even though
 not ODR-equivalent.
 
 Query for this feature with ``__has_attribute(enable_if)``.
+
+Note that functions with one or more ``enable_if`` attributes may not have
+their address taken, unless all of the conditions specified by said
+``enable_if`` are constants that evaluate to ``true``. For example:
+
+.. code-block:: c
+
+  const int TrueConstant = 1;
+  const int FalseConstant = 0;
+  int f(int a) __attribute__((enable_if(a > 0, "")));
+  int g(int a) __attribute__((enable_if(a == 0 || a != 0, "")));
+  int h(int a) __attribute__((enable_if(1, "")));
+  int i(int a) __attribute__((enable_if(TrueConstant, "")));
+  int j(int a) __attribute__((enable_if(FalseConstant, "")));
+
+  void fn() {
+    int (*ptr)(int);
+    ptr = &f; // error: 'a > 0' is not always true
+    ptr = &g; // error: 'a == 0 || a != 0' is not a truthy constant
+    ptr = &h; // OK: 1 is a truthy constant
+    ptr = &i; // OK: 'TrueConstant' is a truthy constant
+    ptr = &j; // error: 'FalseConstant' is a constant, but not truthy
+  }
   }];
 }
 
@@ -660,6 +683,11 @@ message=\ *string-literal*
   Additional message text that Clang will provide when emitting a warning or
   error about use of a deprecated or obsoleted declaration.  Useful to direct
   users to replacement APIs.
+
+replacement=\ *string-literal*
+  Additional message text that Clang will use to provide Fix-It when emitting
+  a warning about use of a deprecated declaration. The Fix-It will replace
+  the deprecated declaration with the new declaration specified.
 
 Multiple availability attributes can be placed on a declaration, which may
 correspond to different platforms.  Only the availability attribute with the
