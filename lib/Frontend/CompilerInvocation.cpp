@@ -2004,10 +2004,6 @@ static void ParsePreprocessorArgs(PreprocessorOptions &Opts, ArgList &Args,
   for (const Arg *A : Args.filtered(OPT_chain_include))
     Opts.ChainedIncludes.emplace_back(A->getValue());
 
-  // Include 'altivec.h' if -faltivec option present
-  if (Args.hasArg(OPT_faltivec))
-    Opts.Includes.emplace_back("altivec.h");
-
   if (Args.getLastArgValue(OPT_target_cpu) == "a2q" &&
       !Args.hasArg(OPT_mno_qpx)) {
     if (DashX == IK_C || DashX == IK_CXX ||
