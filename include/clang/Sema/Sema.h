@@ -146,6 +146,7 @@ namespace clang {
   class ObjCProtocolDecl;
   class OMPThreadPrivateDecl;
   class OMPDeclareReductionDecl;
+  class OMPDeclareSimdDecl;
   class OMPClause;
   struct OverloadCandidate;
   class OverloadCandidateSet;
@@ -2191,7 +2192,8 @@ public:
                              const LookupResult &OldDecls,
                              NamedDecl *&OldDecl,
                              bool IsForUsingDecl);
-  bool IsOverload(FunctionDecl *New, FunctionDecl *Old, bool IsForUsingDecl);
+  bool IsOverload(FunctionDecl *New, FunctionDecl *Old, bool IsForUsingDecl,
+                  bool ConsiderCudaAttrs = true);
 
   /// \brief Checks availability of the function depending on the current
   /// function context.Inside an unavailable function,unavailability is ignored.
@@ -8087,6 +8089,11 @@ public:
       SourceLocation EndLoc,
       llvm::DenseMap<ValueDecl *, Expr *> &VarsWithImplicitDSA);
 
+  /// \brief Called on well-formed '\#pragma omp declare simd' after parsing of
+  /// the associated method/function.
+  DeclGroupPtrTy ActOnOpenMPDeclareSimdDirective(DeclGroupPtrTy DG,
+                                                 SourceLocation StartLoc);
+
   OMPClause *ActOnOpenMPSingleExprClause(OpenMPClauseKind Kind,
                                          Expr *Expr,
                                          SourceLocation StartLoc,
@@ -8897,6 +8904,11 @@ public:
   bool CheckCUDATarget(const FunctionDecl *Caller, const FunctionDecl *Callee) {
     return IdentifyCUDAPreference(Caller, Callee) == CFP_Never;
   }
+
+  /// May add implicit CUDAHostAttr and CUDADeviceAttr attributes to FD,
+  /// depending on FD and the current compilation settings.
+  void maybeAddCUDAHostDeviceAttrs(Scope *S, FunctionDecl *FD,
+                                   const LookupResult &Previous);
 
   /// Finds a function in \p Matches with highest calling priority
   /// from \p Caller context and erases all functions with lower
