@@ -5548,6 +5548,9 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
   case AttributeList::AT_ObjCRuntimeName:
     handleObjCRuntimeName(S, D, Attr);
     break;
+   case AttributeList::AT_ObjCRuntimeVisible:
+    handleSimpleAttribute<ObjCRuntimeVisibleAttr>(S, D, Attr);
+    break;
   case AttributeList::AT_ObjCBoxable:
     handleObjCBoxable(S, D, Attr);
     break;
@@ -5706,6 +5709,9 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
   case AttributeList::AT_OpenCLAccess:
     handleOpenCLAccessAttr(S, D, Attr);
     break;
+  case AttributeList::AT_OpenCLNoSVM:
+    handleOpenCLNoSVMAttr(S, D, Attr);
+    break;
   case AttributeList::AT_SwiftContext:
     handleParameterABIAttr(S, D, Attr, ParameterABI::SwiftContext);
     break;
@@ -5714,9 +5720,6 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     break;
   case AttributeList::AT_SwiftIndirectResult:
     handleParameterABIAttr(S, D, Attr, ParameterABI::SwiftIndirectResult);
-    break;
-  case AttributeList::AT_OpenCLNoSVM:
-    handleOpenCLNoSVMAttr(S, D, Attr);
     break;
   case AttributeList::AT_InternalLinkage:
     handleInternalLinkageAttr(S, D, Attr);
