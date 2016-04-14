@@ -2327,6 +2327,32 @@ TEST(ConstructorDeclaration, Kinds) {
                       cxxConstructorDecl(isMoveConstructor())));
 }
 
+TEST(ConstructorDeclaration, IsUserProvided) {
+  EXPECT_TRUE(notMatches("struct S { int X = 0; };",
+                         cxxConstructorDecl(isUserProvided())));
+  EXPECT_TRUE(notMatches("struct S { S() = default; };",
+                         cxxConstructorDecl(isUserProvided())));
+  EXPECT_TRUE(notMatches("struct S { S() = delete; };",
+                         cxxConstructorDecl(isUserProvided())));
+  EXPECT_TRUE(
+      matches("struct S { S(); };", cxxConstructorDecl(isUserProvided())));
+  EXPECT_TRUE(matches("struct S { S(); }; S::S(){}",
+                      cxxConstructorDecl(isUserProvided())));
+}
+
+TEST(ConstructorDeclaration, IsDelegatingConstructor) {
+  EXPECT_TRUE(notMatches("struct S { S(); S(int); int X; };",
+                         cxxConstructorDecl(isDelegatingConstructor())));
+  EXPECT_TRUE(notMatches("struct S { S(){} S(int X) : X(X) {} int X; };",
+                         cxxConstructorDecl(isDelegatingConstructor())));
+  EXPECT_TRUE(matches(
+      "struct S { S() : S(0) {} S(int X) : X(X) {} int X; };",
+      cxxConstructorDecl(isDelegatingConstructor(), parameterCountIs(0))));
+  EXPECT_TRUE(matches(
+      "struct S { S(); S(int X); int X; }; S::S(int X) : S() {}",
+      cxxConstructorDecl(isDelegatingConstructor(), parameterCountIs(1))));
+}
+
 TEST(DestructorDeclaration, MatchesVirtualDestructor) {
   EXPECT_TRUE(matches("class Foo { virtual ~Foo(); };",
                       cxxDestructorDecl(ofClass(hasName("Foo")))));
@@ -5500,6 +5526,7 @@ TEST(StatementMatcher, HasReturnValue) {
   StatementMatcher RetVal = returnStmt(hasReturnValue(binaryOperator()));
   EXPECT_TRUE(matches("int F() { int a, b; return a + b; }", RetVal));
   EXPECT_FALSE(matches("int F() { int a; return a; }", RetVal));
+  EXPECT_FALSE(matches("void F() { return; }", RetVal));
 }
 
 } // end namespace ast_matchers

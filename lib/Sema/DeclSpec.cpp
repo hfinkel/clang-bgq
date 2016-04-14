@@ -289,6 +289,7 @@ bool Declarator::isDeclarationOfFunction() const {
     case TST_decimal32:
     case TST_decimal64:
     case TST_double:
+    case TST_float128:
     case TST_enum:
     case TST_error:
     case TST_float:
@@ -302,6 +303,8 @@ bool Declarator::isDeclarationOfFunction() const {
     case TST_unspecified:
     case TST_void:
     case TST_wchar:
+#define GENERIC_IMAGE_TYPE(ImgType, Id) case TST_##ImgType##_t:
+#include "clang/Basic/OpenCLImageTypes.def"
       return false;
 
     case TST_decltype_auto:
@@ -455,6 +458,7 @@ const char *DeclSpec::getSpecifierName(DeclSpec::TST T,
   case DeclSpec::TST_half:        return "half";
   case DeclSpec::TST_float:       return "float";
   case DeclSpec::TST_double:      return "double";
+  case DeclSpec::TST_float128:    return "__float128";
   case DeclSpec::TST_bool:        return Policy.Bool ? "bool" : "_Bool";
   case DeclSpec::TST_decimal32:   return "_Decimal32";
   case DeclSpec::TST_decimal64:   return "_Decimal64";
@@ -474,6 +478,10 @@ const char *DeclSpec::getSpecifierName(DeclSpec::TST T,
   case DeclSpec::TST_underlyingType: return "__underlying_type";
   case DeclSpec::TST_unknown_anytype: return "__unknown_anytype";
   case DeclSpec::TST_atomic: return "_Atomic";
+#define GENERIC_IMAGE_TYPE(ImgType, Id) \
+  case DeclSpec::TST_##ImgType##_t: \
+    return #ImgType "_t";
+#include "clang/Basic/OpenCLImageTypes.def"
   case DeclSpec::TST_error:       return "(error)";
   }
   llvm_unreachable("Unknown typespec!");

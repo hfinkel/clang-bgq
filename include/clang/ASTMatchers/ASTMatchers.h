@@ -3803,6 +3803,21 @@ AST_MATCHER(CXXMethodDecl, isOverride) {
   return Node.size_overridden_methods() > 0 || Node.hasAttr<OverrideAttr>();
 }
 
+/// \brief Matches method declarations that are user-provided.
+///
+/// Given
+/// \code
+///   struct S {
+///     S(); // #1
+///     S(const S &) = default; // #2
+///     S(S &&) = delete; // #3
+///   };
+/// \endcode
+/// cxxConstructorDecl(isUserProvided()) will match #1, but not #2 or #3.
+AST_MATCHER(CXXMethodDecl, isUserProvided) {
+  return Node.isUserProvided();
+}
+
 /// \brief Matches member expressions that are called with '->' as opposed
 /// to '.'.
 ///
@@ -4911,6 +4926,23 @@ AST_MATCHER(CXXConstructorDecl, isDefaultConstructor) {
   return Node.isDefaultConstructor();
 }
 
+/// \brief Matches constructors that delegate to another constructor.
+///
+/// Given
+/// \code
+///   struct S {
+///     S(); // #1
+///     S(int) {} // #2
+///     S(S &&) : S() {} // #3
+///   };
+///   S::S() : S(0) {} // #4
+/// \endcode
+/// cxxConstructorDecl(isDelegatingConstructor()) will match #3 and #4, but not
+/// #1 or #2.
+AST_MATCHER(CXXConstructorDecl, isDelegatingConstructor) {
+  return Node.isDelegatingConstructor();
+}
+
 /// \brief Matches constructor and conversion declarations that are marked with
 /// the explicit keyword.
 ///
@@ -5013,9 +5045,11 @@ AST_MATCHER_P(Decl, hasAttr, attr::Kind, AttrKind) {
 ///   matches 'return a + b'
 /// with binaryOperator()
 ///   matching 'a + b'
-AST_MATCHER_P(ReturnStmt, hasReturnValue, internal::Matcher<Expr>, 
+AST_MATCHER_P(ReturnStmt, hasReturnValue, internal::Matcher<Expr>,
               InnerMatcher) {
-  return InnerMatcher.matches(*Node.getRetValue(), Finder, Builder);
+  if (const auto *RetValue = Node.getRetValue())
+    return InnerMatcher.matches(*RetValue, Finder, Builder);
+  return false;
 }
 
 
