@@ -3883,7 +3883,18 @@ def note_template_type_alias_instantiation_here : Note<
   "in instantiation of template type alias %0 requested here">;
 def note_template_exception_spec_instantiation_here : Note<
   "in instantiation of exception specification for %0 requested here">;
-  
+def warn_var_template_missing : Warning<"instantiation of variable %q0 "
+  "required here, but no definition is available">,
+  InGroup<UndefinedVarTemplate>;
+def warn_func_template_missing : Warning<"instantiation of function %q0 "
+  "required here, but no definition is available">,
+  InGroup<UndefinedFuncTemplate>, DefaultIgnore;
+def note_forward_template_decl : Note<
+  "forward declaration of template entity is here">;
+def note_inst_declaration_hint : Note<"add an explicit instantiation "
+  "declaration to suppress this warning if %q0 is explicitly instantiated in "
+  "another translation unit">;
+
 def note_default_arg_instantiation_here : Note<
   "in instantiation of default argument for '%0' required here">;
 def note_default_function_arg_instantiation_here : Note<
@@ -5246,6 +5257,8 @@ def err_typecheck_pointer_arith_void_type : Error<
   "arithmetic on%select{ a|}0 pointer%select{|s}0 to void">;
 def err_typecheck_decl_incomplete_type : Error<
   "variable has incomplete type %0">;
+def err_typecheck_decl_incomplete_type___float128 : Error<
+  "support for type '__float128' is not yet implemented">;
 def ext_typecheck_decl_incomplete_type : ExtWarn<
   "tentative definition of variable with internal linkage has incomplete non-array type %0">,
   InGroup<DiagGroup<"tentative-definition-incomplete-type">>;
@@ -7409,8 +7422,9 @@ def err_va_start_used_in_wrong_abi_function : Error<
   "'va_start' used in %select{System V|Win64}0 ABI function">;
 def err_ms_va_start_used_in_sysv_function : Error<
   "'__builtin_ms_va_start' used in System V ABI function">;
-def warn_second_parameter_of_va_start_not_last_named_argument : Warning<
-  "second parameter of 'va_start' not last named argument">, InGroup<Varargs>;
+def warn_second_arg_of_va_start_not_last_named_param : Warning<
+  "second argument to 'va_start' is not the last named parameter">,
+  InGroup<Varargs>;
 def warn_va_start_of_reference_type_is_undefined : Warning<
   "'va_start' has undefined behavior with reference types">, InGroup<Varargs>;
 def err_first_argument_to_va_arg_not_of_type_va_list : Error<
@@ -7599,8 +7613,8 @@ def err_c99_array_usage_cxx : Error<
   "feature, not permitted in C++">;
  def err_type_requires_extension : Error<
   "use of type %0 requires %1 extension to be enabled">;
-def err_type_unsupported : Error<
-  "%0 is not supported on this target">;
+def err_int128_unsupported : Error<
+  "__int128 is not supported on this target">;
 def err_nsconsumed_attribute_mismatch : Error<
   "overriding method has mismatched ns_consumed attribute on its"
   " parameter">;
@@ -8433,5 +8447,13 @@ def err_objc_type_arg_does_not_match_bound : Error<
 def warn_objc_redundant_qualified_class_type : Warning<
   "parameterized class %0 already conforms to the protocols listed; did you "
   "forget a '*'?">, InGroup<ObjCProtocolQualifiers>;
+
+def warn_block_literal_attributes_on_omitted_return_type : Warning<
+  "attribute %0 ignored, because it cannot be applied to omitted return type">,
+  InGroup<IgnoredAttributes>;
+
+def warn_block_literal_qualifiers_on_omitted_return_type : Warning<
+  "'%0' qualifier on omitted return type %1 has no effect">,
+  InGroup<IgnoredQualifiers>;
 
 } // end of sema component.

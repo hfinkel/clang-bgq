@@ -2162,6 +2162,9 @@
 // ARM-NETBSD:#define __arm 1
 // ARM-NETBSD:#define __arm__ 1
 
+// RUN: %clang_cc1 -E -dM -ffreestanding -triple=arm-none-eabi < /dev/null | FileCheck -match-full-lines -check-prefix ARM-NONE-EABI %s
+// ARM-NONE-EABI: #define __ELF__ 1
+
 // RUN: %clang -target arm-apple-darwin-eabi -arch armv7s -x c -E -dM %s -o - | FileCheck -match-full-lines --check-prefix=ARM-DARWIN-NO-EABI %s
 // RUN: %clang -target arm-apple-darwin-eabi -arch armv6m -x c -E -dM %s -o - | FileCheck -match-full-lines --check-prefix=ARM-DARWIN-EABI %s
 // RUN: %clang -target arm-apple-darwin-eabi -arch armv7m -x c -E -dM %s -o - | FileCheck -match-full-lines --check-prefix=ARM-DARWIN-EABI %s
@@ -5818,9 +5821,6 @@
 // PPCPOWER8:#define _ARCH_PWR6X 1
 // PPCPOWER8:#define _ARCH_PWR7 1
 // PPCPOWER8:#define _ARCH_PWR8 1
-//
-// RUN: %clang_cc1 -E -dM -ffreestanding -triple=powerpc64-none-none -target-feature +float128 -target-cpu power8 -fno-signed-char < /dev/null | FileCheck -check-prefix PPC-FLOAT128 %s
-// PPC-FLOAT128:#define __FLOAT128__ 1
 //
 // RUN: %clang_cc1 -E -dM -ffreestanding -triple=powerpc64-unknown-linux-gnu -fno-signed-char < /dev/null | FileCheck -match-full-lines -check-prefix PPC64-LINUX %s
 //

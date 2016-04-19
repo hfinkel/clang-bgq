@@ -528,13 +528,7 @@ llvm::DIType *CGDebugInfo::CreateType(const BuiltinType *BT) {
   case BuiltinType::Half:
   case BuiltinType::Float:
   case BuiltinType::LongDouble:
-  case BuiltinType::Float128:
   case BuiltinType::Double:
-    // FIXME: For targets where long double and __float128 have the same size,
-    // they are currently indistinguishable in the debugger without some
-    // special treatment. However, there is currently no consensus on encoding
-    // and this should be updated once a DWARF encoding exists for distinct
-    // floating point types of the same size.
     Encoding = llvm::dwarf::DW_ATE_float;
     break;
   }
@@ -2380,6 +2374,30 @@ llvm::DICompositeType *CGDebugInfo::CreateLimitedType(const RecordType *Ty) {
       getTagForRecord(RD), RDName, RDContext, DefUnit, Line, 0, Size, Align, 0,
       FullName);
 
+  // Elements of composite types usually have back to the type, creating
+  // uniquing cycles.  Distinct nodes are more efficient.
+  switch (RealDecl->getTag()) {
+  default:
+    llvm_unreachable("invalid composite type tag");
+
+  case llvm::dwarf::DW_TAG_array_type:
+  case llvm::dwarf::DW_TAG_enumeration_type:
+    // Array elements and most enumeration elements don't have back references,
+    // so they don't tend to be involved in uniquing cycles and there is some
+    // chance of merging them when linking together two modules.  Only make
+    // them distinct if they are ODR-uniqued.
+    if (FullName.empty())
+      break;
+
+  case llvm::dwarf::DW_TAG_structure_type:
+  case llvm::dwarf::DW_TAG_union_type:
+  case llvm::dwarf::DW_TAG_class_type:
+    // Immediatley resolve to a distinct node.
+    RealDecl =
+        llvm::MDNode::replaceWithDistinct(llvm::TempDICompositeType(RealDecl));
+    break;
+  }
+
   RegionMap[Ty->getDecl()].reset(RealDecl);
   TypeCache[QualType(Ty, 0).getAsOpaquePtr()].reset(RealDecl);
 
@@ -2793,11 +2811,11 @@ void CGDebugInfo::EmitFunctionDecl(GlobalDecl GD, SourceLocation Loc,
   unsigned LineNo = getLineNumber(Loc);
   unsigned ScopeLine = 0;
 
-  DBuilder.createFunction(FDContext, Name, LinkageName, Unit, LineNo,
-                          getOrCreateFunctionType(D, FnType, Unit),
-                          false /*internalLinkage*/, true /*definition*/,
-                          ScopeLine, Flags, CGM.getLangOpts().Optimize,
-                          TParamsArray.get(), getFunctionDeclaration(D));
+  DBuilder.retainType(DBuilder.createFunction(
+      FDContext, Name, LinkageName, Unit, LineNo,
+      getOrCreateFunctionType(D, FnType, Unit), false /*internalLinkage*/,
+      false /*definition*/, ScopeLine, Flags, CGM.getLangOpts().Optimize,
+      TParamsArray.get(), getFunctionDeclaration(D)));
 }
 
 void CGDebugInfo::EmitLocation(CGBuilderTy &Builder, SourceLocation Loc) {
@@ -3244,9 +3262,14 @@ void CGDebugInfo::EmitDeclareOfBlockLiteralArgVariable(const CGBlockInfo &block,
 
     // If we have a null capture, this must be the C++ 'this' capture.
     if (!capture) {
-      const CXXMethodDecl *method =
-          cast<CXXMethodDecl>(blockDecl->getNonClosureContext());
-      QualType type = method->getThisType(C);
+      QualType type;
+      if (auto *Method =
+              cast_or_null<CXXMethodDecl>(blockDecl->getNonClosureContext()))
+        type = Method->getThisType(C);
+      else if (auto *RDecl = dyn_cast<CXXRecordDecl>(blockDecl->getParent()))
+        type = QualType(RDecl->getTypeForDecl(), 0);
+      else
+        llvm_unreachable("unexpected block declcontext");
 
       fields.push_back(createFieldType("this", type, 0, loc, AS_public,
                                        offsetInBits, tunit, tunit));
