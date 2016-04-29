@@ -2550,12 +2550,40 @@ _mm512_permutex2var_ps(__m512 __A, __m512i __I, __m512 __B)
                                          (I), (__v8di)_mm512_setzero_si512(), \
                                          (__mmask8)-1); })
 
+#define _mm512_mask_alignr_epi64( __W,  __U,  __A, __B, __imm) __extension__({\
+  (__m512i)__builtin_ia32_alignq512_mask ((__v8di) __A,\
+                                         (__v8di) __B, __imm,\
+                                         (__v8di) __W,\
+                                         (__mmask8) __U);\
+})
+
+#define _mm512_maskz_alignr_epi64( __U,  __A,  __B, __imm) __extension__({\
+  (__m512i)__builtin_ia32_alignq512_mask ((__v8di) __A,\
+                                         (__v8di) __B, __imm,\
+                                         (__v8di) _mm512_setzero_si512 (),\
+                                         (__mmask8) __U);\
+})
+
 #define _mm512_alignr_epi32(A, B, I) __extension__ ({ \
-  (__m512i)__builtin_ia32_alignd512_mask((__v16si)(__m512i)(A), \
+    (__m512i)__builtin_ia32_alignd512_mask((__v16si)(__m512i)(A), \
                                          (__v16si)(__m512i)(B), \
                                          (I), (__v16si)_mm512_setzero_si512(), \
-                                         (__mmask16)-1); })
+                                         (__mmask16)-1);\
+})
+                                         
+#define _mm512_mask_alignr_epi32( __W, __U, __A, __B,  __imm) __extension__ ({\
+    (__m512i) __builtin_ia32_alignd512_mask((__v16si) __A,\
+                                         (__v16si) __B, __imm,\
+                                         (__v16si) __W,\
+                                         (__mmask16) __U);\
+})
 
+#define _mm512_maskz_alignr_epi32( __U, __A, __B, __imm) __extension__({\
+    (__m512i) __builtin_ia32_alignd512_mask ((__v16si) __A,\
+                                         (__v16si) __B, __imm,\
+                                         (__v16si) _mm512_setzero_si512 (),\
+                                         (__mmask16) __U);\
+})
 /* Vector Extract */
 
 #define _mm512_extractf64x4_pd(A, I) __extension__ ({                    \
@@ -7531,6 +7559,74 @@ static __inline__ void __DEFAULT_FN_ATTRS
 _mm512_stream_ps (float *__P, __m512 __A)
 {
   __builtin_ia32_movntps512 (__P, (__v16sf) __A);
+}
+
+static __inline__ __m512d __DEFAULT_FN_ATTRS
+_mm512_mask_compress_pd (__m512d __W, __mmask8 __U, __m512d __A)
+{
+  return (__m512d) __builtin_ia32_compressdf512_mask ((__v8df) __A,
+                  (__v8df) __W,
+                  (__mmask8) __U);
+}
+
+static __inline__ __m512d __DEFAULT_FN_ATTRS
+_mm512_maskz_compress_pd (__mmask8 __U, __m512d __A)
+{
+  return (__m512d) __builtin_ia32_compressdf512_mask ((__v8df) __A,
+                  (__v8df)
+                  _mm512_setzero_pd (),
+                  (__mmask8) __U);
+}
+
+static __inline__ __m512i __DEFAULT_FN_ATTRS
+_mm512_mask_compress_epi64 (__m512i __W, __mmask8 __U, __m512i __A)
+{
+  return (__m512i) __builtin_ia32_compressdi512_mask ((__v8di) __A,
+                  (__v8di) __W,
+                  (__mmask8) __U);
+}
+
+static __inline__ __m512i __DEFAULT_FN_ATTRS
+_mm512_maskz_compress_epi64 (__mmask8 __U, __m512i __A)
+{
+  return (__m512i) __builtin_ia32_compressdi512_mask ((__v8di) __A,
+                  (__v8di)
+                  _mm512_setzero_si512 (),
+                  (__mmask8) __U);
+}
+
+static __inline__ __m512 __DEFAULT_FN_ATTRS
+_mm512_mask_compress_ps (__m512 __W, __mmask16 __U, __m512 __A)
+{
+  return (__m512) __builtin_ia32_compresssf512_mask ((__v16sf) __A,
+                 (__v16sf) __W,
+                 (__mmask16) __U);
+}
+
+static __inline__ __m512 __DEFAULT_FN_ATTRS
+_mm512_maskz_compress_ps (__mmask16 __U, __m512 __A)
+{
+  return (__m512) __builtin_ia32_compresssf512_mask ((__v16sf) __A,
+                 (__v16sf)
+                 _mm512_setzero_ps (),
+                 (__mmask16) __U);
+}
+
+static __inline__ __m512i __DEFAULT_FN_ATTRS
+_mm512_mask_compress_epi32 (__m512i __W, __mmask16 __U, __m512i __A)
+{
+  return (__m512i) __builtin_ia32_compresssi512_mask ((__v16si) __A,
+                  (__v16si) __W,
+                  (__mmask16) __U);
+}
+
+static __inline__ __m512i __DEFAULT_FN_ATTRS
+_mm512_maskz_compress_epi32 (__mmask16 __U, __m512i __A)
+{
+  return (__m512i) __builtin_ia32_compresssi512_mask ((__v16si) __A,
+                  (__v16si)
+                  _mm512_setzero_si512 (),
+                  (__mmask16) __U);
 }
 
 #undef __DEFAULT_FN_ATTRS
