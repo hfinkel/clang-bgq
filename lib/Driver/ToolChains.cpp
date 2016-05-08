@@ -4143,6 +4143,7 @@ void Linux::AddClangCXXStdlibIncludeArgs(const ArgList &DriverArgs,
   const std::string LibStdCXXIncludePathCandidates[] = {
       // Gentoo is weird and places its headers inside the GCC install,
       // so if the first attempt to find the headers fails, try these patterns.
+      InstallDir.str() + "/include/g++-v" + Version.Text,
       InstallDir.str() + "/include/g++-v" + Version.MajorStr + "." +
           Version.MinorStr,
       InstallDir.str() + "/include/g++-v" + Version.MajorStr,
