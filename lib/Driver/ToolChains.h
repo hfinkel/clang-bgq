@@ -1095,7 +1095,7 @@ public:
 
 /// MyriadToolChain - A tool chain using either clang or the external compiler
 /// installed by the Movidius SDK to perform all subcommands.
-class LLVM_LIBRARY_VISIBILITY MyriadToolChain : public Generic_GCC {
+class LLVM_LIBRARY_VISIBILITY MyriadToolChain : public Generic_ELF {
 public:
   MyriadToolChain(const Driver &D, const llvm::Triple &Triple,
                   const llvm::opt::ArgList &Args);
