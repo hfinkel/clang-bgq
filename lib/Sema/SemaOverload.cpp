@@ -5969,7 +5969,6 @@ EnableIfAttr *Sema::CheckEnableIf(FunctionDecl *Function, ArrayRef<Expr *> Args,
   SFINAETrap Trap(*this);
   SmallVector<Expr *, 16> ConvertedArgs;
   bool InitializationFailed = false;
-  bool ContainsValueDependentExpr = false;
 
   // Convert the arguments.
   for (unsigned I = 0, E = Args.size(); I != E; ++I) {
@@ -5991,7 +5990,6 @@ EnableIfAttr *Sema::CheckEnableIf(FunctionDecl *Function, ArrayRef<Expr *> Args,
       break;
     }
 
-    ContainsValueDependentExpr |= R.get()->isValueDependent();
     ConvertedArgs.push_back(R.get());
   }
 
@@ -6012,7 +6010,6 @@ EnableIfAttr *Sema::CheckEnableIf(FunctionDecl *Function, ArrayRef<Expr *> Args,
         InitializationFailed = true;
         break;
       }
-      ContainsValueDependentExpr |= R.get()->isValueDependent();
       ConvertedArgs.push_back(R.get());
     }
 
@@ -6022,18 +6019,14 @@ EnableIfAttr *Sema::CheckEnableIf(FunctionDecl *Function, ArrayRef<Expr *> Args,
 
   for (auto *EIA : EnableIfAttrs) {
     APValue Result;
-    if (EIA->getCond()->isValueDependent()) {
-      // Don't even try now, we'll examine it after instantiation.
-      continue;
-    }
-
+    // FIXME: This doesn't consider value-dependent cases, because doing so is
+    // very difficult. Ideally, we should handle them more gracefully.
     if (!EIA->getCond()->EvaluateWithSubstitution(
-            Result, Context, Function, llvm::makeArrayRef(ConvertedArgs))) {
-      if (!ContainsValueDependentExpr)
-        return EIA;
-    } else if (!Result.isInt() || !Result.getInt().getBoolValue()) {
+            Result, Context, Function, llvm::makeArrayRef(ConvertedArgs)))
       return EIA;
-    }
+
+    if (!Result.isInt() || !Result.getInt().getBoolValue())
+      return EIA;
   }
   return nullptr;
 }
