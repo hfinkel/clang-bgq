@@ -1183,8 +1183,10 @@ void mips::getMipsCPUAndABI(const ArgList &Args, const llvm::Triple &Triple,
   }
 
   // MIPS64r6 is the default for Android MIPS64 (mips64el-linux-android).
-  if (Triple.isAndroid())
+  if (Triple.isAndroid()) {
+    DefMips32CPU = "mips32";
     DefMips64CPU = "mips64r6";
+  }
 
   // MIPS3 is the default for mips64*-unknown-openbsd.
   if (Triple.getOS() == llvm::Triple::OpenBSD)
@@ -3962,7 +3964,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   if (Args.hasFlag(options::OPT_mrtd, options::OPT_mno_rtd, false))
-    CmdArgs.push_back("-mrtd");
+    CmdArgs.push_back("-fdefault-calling-conv=stdcall");
 
   if (shouldUseFramePointer(Args, getToolChain().getTriple()))
     CmdArgs.push_back("-mdisable-fp-elim");
@@ -6157,6 +6159,15 @@ void Clang::AddClangCLArgs(const ArgList &Args, types::ID InputType,
     else
       CmdArgs.push_back("-fms-memptr-rep=virtual");
   }
+
+  if (Args.getLastArg(options::OPT__SLASH_Gd))
+     CmdArgs.push_back("-fdefault-calling-conv=cdecl");
+  else if (Args.getLastArg(options::OPT__SLASH_Gr))
+     CmdArgs.push_back("-fdefault-calling-conv=fastcall");
+  else if (Args.getLastArg(options::OPT__SLASH_Gz))
+     CmdArgs.push_back("-fdefault-calling-conv=stdcall");
+  else if (Args.getLastArg(options::OPT__SLASH_Gv))
+     CmdArgs.push_back("-fdefault-calling-conv=vectorcall");
 
   if (Arg *A = Args.getLastArg(options::OPT_vtordisp_mode_EQ))
     A->render(Args, CmdArgs);
