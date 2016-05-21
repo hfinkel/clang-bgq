@@ -2124,6 +2124,29 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
         Builder.CreateCall(CGM.CreateRuntimeFunction(FTy, Name), {Arg0}));
   }
 
+  // OpenCL v2.0 s6.13.9 - Address space qualifier functions.
+  case Builtin::BIto_global:
+  case Builtin::BIto_local:
+  case Builtin::BIto_private: {
+    auto Arg0 = EmitScalarExpr(E->getArg(0));
+    auto NewArgT = llvm::PointerType::get(Int8Ty,
+      CGM.getContext().getTargetAddressSpace(LangAS::opencl_generic));
+    auto NewRetT = llvm::PointerType::get(Int8Ty,
+      CGM.getContext().getTargetAddressSpace(
+        E->getType()->getPointeeType().getAddressSpace()));
+    auto FTy = llvm::FunctionType::get(NewRetT, {NewArgT}, false);
+    llvm::Value *NewArg;
+    if (Arg0->getType()->getPointerAddressSpace() !=
+        NewArgT->getPointerAddressSpace())
+      NewArg = Builder.CreateAddrSpaceCast(Arg0, NewArgT);
+    else
+      NewArg = Builder.CreateBitOrPointerCast(Arg0, NewArgT);
+    auto NewCall = Builder.CreateCall(CGM.CreateRuntimeFunction(FTy,
+      E->getDirectCallee()->getName()), {NewArg});
+    return RValue::get(Builder.CreateBitOrPointerCast(NewCall,
+      ConvertType(E->getType())));
+  }
+
   case Builtin::BIprintf:
     if (getLangOpts().CUDA && getLangOpts().CUDAIsDevice)
       return EmitCUDADevicePrintfCallExpr(E, ReturnValue);
@@ -6336,6 +6359,16 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
       AVX512F,
       BMI,
       BMI2,
+      AES,
+      PCLMUL,
+      AVX512VL,
+      AVX512BW,
+      AVX512DQ,
+      AVX512CD,
+      AVX512ER,
+      AVX512PF,
+      AVX512VBMI,
+      AVX512IFMA,
       MAX
     };
 
@@ -6346,6 +6379,7 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
                               .Case("sse", X86Features::SSE)
                               .Case("sse2", X86Features::SSE2)
                               .Case("sse3", X86Features::SSE3)
+                              .Case("ssse3", X86Features::SSSE3)
                               .Case("sse4.1", X86Features::SSE4_1)
                               .Case("sse4.2", X86Features::SSE4_2)
                               .Case("avx", X86Features::AVX)
@@ -6357,6 +6391,16 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
                               .Case("avx512f", X86Features::AVX512F)
                               .Case("bmi", X86Features::BMI)
                               .Case("bmi2", X86Features::BMI2)
+                              .Case("aes", X86Features::AES)
+                              .Case("pclmul", X86Features::PCLMUL)
+                              .Case("avx512vl", X86Features::AVX512VL)
+                              .Case("avx512bw", X86Features::AVX512BW)
+                              .Case("avx512dq", X86Features::AVX512DQ)
+                              .Case("avx512cd", X86Features::AVX512CD)
+                              .Case("avx512er", X86Features::AVX512ER)
+                              .Case("avx512pf", X86Features::AVX512PF)
+                              .Case("avx512vbmi", X86Features::AVX512VBMI)
+                              .Case("avx512ifma", X86Features::AVX512IFMA)
                               .Default(X86Features::MAX);
     assert(Feature != X86Features::MAX && "Invalid feature!");
 
