@@ -441,8 +441,12 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
                                  : CodeGenOptions::OnlyAlwaysInlining);
   // -fno-inline-functions overrides OptimizationLevel > 1.
   Opts.NoInline = Args.hasArg(OPT_fno_inline);
-  Opts.setInlining(Args.hasArg(OPT_fno_inline_functions) ?
-                     CodeGenOptions::OnlyAlwaysInlining : Opts.getInlining());
+  if (Arg* InlineArg = Args.getLastArg(options::OPT_finline_functions,
+                                       options::OPT_fno_inline_functions)) {
+    Opts.setInlining(
+      InlineArg->getOption().matches(options::OPT_finline_functions) ?
+        CodeGenOptions::NormalInlining : CodeGenOptions::OnlyAlwaysInlining);
+  }
 
   if (Arg *A = Args.getLastArg(OPT_fveclib)) {
     StringRef Name = A->getValue();
@@ -1617,6 +1621,9 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
 
   if (Opts.CUDAIsDevice && Args.hasArg(OPT_fcuda_flush_denormals_to_zero))
     Opts.CUDADeviceFlushDenormalsToZero = 1;
+
+  if (Opts.CUDAIsDevice && Args.hasArg(OPT_fcuda_approx_transcendentals))
+    Opts.CUDADeviceApproxTranscendentals = 1;
 
   if (Opts.ObjC1) {
     if (Arg *arg = Args.getLastArg(OPT_fobjc_runtime_EQ)) {

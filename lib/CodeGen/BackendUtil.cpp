@@ -258,6 +258,8 @@ static void addEfficiencySanitizerPass(const PassManagerBuilder &Builder,
   EfficiencySanitizerOptions Opts;
   if (LangOpts.Sanitize.has(SanitizerKind::EfficiencyCacheFrag))
     Opts.ToolType = EfficiencySanitizerOptions::ESAN_CacheFrag;
+  else if (LangOpts.Sanitize.has(SanitizerKind::EfficiencyWorkingSet))
+    Opts.ToolType = EfficiencySanitizerOptions::ESAN_WorkingSet;
   PM.add(createEfficiencySanitizerPass(Opts));
 }
 
@@ -594,6 +596,9 @@ TargetMachine *EmitAssemblyHelper::CreateTargetMachine(bool MustCreateTM) {
                             .Case("5", llvm::EABI::EABI5)
                             .Case("gnu", llvm::EABI::GNU)
                             .Default(llvm::EABI::Default);
+
+  if (LangOpts.SjLjExceptions)
+    Options.ExceptionModel = llvm::ExceptionHandling::SjLj;
 
   Options.LessPreciseFPMADOption = CodeGenOpts.LessPreciseFPMAD;
   Options.NoInfsFPMath = CodeGenOpts.NoInfsFPMath;
