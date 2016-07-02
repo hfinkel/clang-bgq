@@ -295,6 +295,7 @@ void Clang::AddPreprocessingOptions(Compilation &C, const JobAction &JA,
                                     const InputInfoList &Inputs,
                                     const ToolChain *AuxToolChain) const {
   Arg *A;
+  const bool IsIAMCU = getToolChain().getTriple().isOSIAMCU();
 
   CheckPreprocessingOptions(D, Args);
 
@@ -501,6 +502,13 @@ void Clang::AddPreprocessingOptions(Compilation &C, const JobAction &JA,
                                                        << A->getAsString(Args);
         }
       }
+    } else if (A->getOption().matches(options::OPT_isystem_after)) {
+      // Handling of paths which must come late.  These entries are handled by
+      // the toolchain itself after the resource dir is inserted in the right
+      // search order.
+      // Do not claim the argument so that the use of the argument does not
+      // silently go unnoticed on toolchains which do not honour the option.
+      continue;
     }
 
     // Not translated, render as usual.
@@ -562,10 +570,15 @@ void Clang::AddPreprocessingOptions(Compilation &C, const JobAction &JA,
       AuxToolChain->AddClangCXXStdlibIncludeArgs(Args, CmdArgs);
   }
 
-  // Add system include arguments.
-  getToolChain().AddClangSystemIncludeArgs(Args, CmdArgs);
-  if (AuxToolChain)
+  // Add system include arguments for all targets but IAMCU.
+  if (!IsIAMCU) {
+    getToolChain().AddClangSystemIncludeArgs(Args, CmdArgs);
+    if (AuxToolChain)
       AuxToolChain->AddClangCXXStdlibIncludeArgs(Args, CmdArgs);
+  } else {
+    // For IAMCU add special include arguments.
+    getToolChain().AddIAMCUIncludeArgs(Args, CmdArgs);
+  }
 
   // Add CUDA include arguments, if needed.
   if (types::isCuda(Inputs[0].getType()))
@@ -790,10 +803,12 @@ arm::FloatABI arm::getARMFloatABI(const ToolChain &TC, const ArgList &Args) {
     default:
       switch (Triple.getEnvironment()) {
       case llvm::Triple::GNUEABIHF:
+      case llvm::Triple::MuslEABIHF:
       case llvm::Triple::EABIHF:
         ABI = FloatABI::Hard;
         break;
       case llvm::Triple::GNUEABI:
+      case llvm::Triple::MuslEABI:
       case llvm::Triple::EABI:
         // EABI is always AAPCS, and if it was not marked 'hard', it's softfp
         ABI = FloatABI::SoftFP;
@@ -1039,6 +1054,8 @@ void Clang::AddARMTargetArgs(const llvm::Triple &Triple, const ArgList &Args,
     case llvm::Triple::Android:
     case llvm::Triple::GNUEABI:
     case llvm::Triple::GNUEABIHF:
+    case llvm::Triple::MuslEABI:
+    case llvm::Triple::MuslEABIHF:
       ABIName = "aapcs-linux";
       break;
     case llvm::Triple::EABIHF:
@@ -1721,9 +1738,6 @@ static void getSparcTargetFeatures(const Driver &D, const ArgList &Args,
 
 void Clang::AddSparcTargetArgs(const ArgList &Args,
                                ArgStringList &CmdArgs) const {
-  //const Driver &D = getToolChain().getDriver();
-  std::string Triple = getToolChain().ComputeEffectiveClangTriple(Args);
-
   sparc::FloatABI FloatABI =
       sparc::getSparcFloatABI(getToolChain().getDriver(), Args);
 
@@ -2230,7 +2244,7 @@ void Clang::AddX86TargetArgs(const ArgList &Args,
   }
 
   // Set flags to support MCU ABI.
-  if (Args.hasArg(options::OPT_miamcu)) {
+  if (Args.hasFlag(options::OPT_miamcu, options::OPT_mno_iamcu, false)) {
     CmdArgs.push_back("-mfloat-abi");
     CmdArgs.push_back("soft");
     CmdArgs.push_back("-mstack-alignment=4");
@@ -2333,7 +2347,7 @@ static bool DecodeAArch64Mcpu(const Driver &D, StringRef Mcpu, StringRef &CPU,
   CPU = Split.first;
   if (CPU == "cortex-a53" || CPU == "cortex-a57" ||
       CPU == "cortex-a72" || CPU == "cortex-a35" || CPU == "exynos-m1" ||
-      CPU == "kryo"       || CPU == "cortex-a73") {
+      CPU == "kryo"       || CPU == "cortex-a73" || CPU == "vulcan") {
     Features.push_back("+neon");
     Features.push_back("+crc");
     Features.push_back("+crypto");
@@ -2824,7 +2838,7 @@ static void CollectArgsForIntegratedAssembler(Compilation &C,
   // options.
   bool CompressDebugSections = false;
 
-  bool UseRelaxRelocations = false;
+  bool UseRelaxRelocations = ENABLE_X86_RELAX_RELOCATIONS;
   const char *MipsTargetFeature = nullptr;
   for (const Arg *A :
        Args.filtered(options::OPT_Wa_COMMA, options::OPT_Xassembler)) {
@@ -3742,6 +3756,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       getToolChain().getTriple().isWindowsCygwinEnvironment();
   bool IsWindowsMSVC = getToolChain().getTriple().isWindowsMSVCEnvironment();
   bool IsPS4CPU = getToolChain().getTriple().isPS4CPU();
+  bool IsIAMCU = getToolChain().getTriple().isOSIAMCU();
 
   // Check number of inputs for sanity. We need at least one input.
   assert(Inputs.size() >= 1 && "Must have at least one input.");
@@ -3751,6 +3766,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // input.
   bool IsCuda = types::isCuda(Input.getType());
   assert((IsCuda || Inputs.size() == 1) && "Unable to handle multiple inputs.");
+
+  // C++ is not supported for IAMCU.
+  if (IsIAMCU && types::isCXX(Input.getType()))
+    D.Diag(diag::err_drv_clang_unsupported) << "C++ for IAMCU";
 
   // Invoke ourselves in -cc1 mode.
   //
@@ -3996,10 +4015,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (PICLevel > 0) {
     CmdArgs.push_back("-pic-level");
     CmdArgs.push_back(PICLevel == 1 ? "1" : "2");
-    if (IsPIE) {
-      CmdArgs.push_back("-pie-level");
-      CmdArgs.push_back(PICLevel == 1 ? "1" : "2");
-    }
+    if (IsPIE)
+      CmdArgs.push_back("-pic-is-pie");
   }
 
   if (Arg *A = Args.getLastArg(options::OPT_meabi)) {
@@ -5089,6 +5106,40 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-arm-restrict-it");
   }
 
+  // Forward -cl options to -cc1
+  if (Args.getLastArg(options::OPT_cl_opt_disable)) {
+    CmdArgs.push_back("-cl-opt-disable");
+  }
+  if (Args.getLastArg(options::OPT_cl_strict_aliasing)) {
+    CmdArgs.push_back("-cl-strict-aliasing");
+  }
+  if (Args.getLastArg(options::OPT_cl_single_precision_constant)) {
+    CmdArgs.push_back("-cl-single-precision-constant");
+  }
+  if (Args.getLastArg(options::OPT_cl_finite_math_only)) {
+    CmdArgs.push_back("-cl-finite-math-only");
+  }
+  if (Args.getLastArg(options::OPT_cl_kernel_arg_info)) {
+    CmdArgs.push_back("-cl-kernel-arg-info");
+  }
+  if (Args.getLastArg(options::OPT_cl_unsafe_math_optimizations)) {
+    CmdArgs.push_back("-cl-unsafe-math-optimizations");
+  }
+  if (Args.getLastArg(options::OPT_cl_fast_relaxed_math)) {
+    CmdArgs.push_back("-cl-fast-relaxed-math");
+  }
+  if (Args.getLastArg(options::OPT_cl_mad_enable)) {
+    CmdArgs.push_back("-cl-mad-enable");
+  }
+  if (Arg *A = Args.getLastArg(options::OPT_cl_std_EQ)) {
+    std::string CLStdStr = "-cl-std=";
+    CLStdStr += A->getValue();
+    CmdArgs.push_back(Args.MakeArgString(CLStdStr));
+  }
+  if (Args.getLastArg(options::OPT_cl_denorms_are_zero)) {
+    CmdArgs.push_back("-cl-denorms-are-zero");
+  }
+
   // Forward -f options with positive and negative forms; we translate
   // these by hand.
   if (Arg *A = Args.getLastArg(options::OPT_fprofile_sample_use_EQ)) {
@@ -5340,10 +5391,25 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   bool IsMSVC2015Compatible = MSVT.getMajor() >= 19;
   if (ImplyVCPPCXXVer) {
-    if (IsMSVC2015Compatible)
-      CmdArgs.push_back("-std=c++14");
-    else
-      CmdArgs.push_back("-std=c++11");
+    StringRef LanguageStandard;
+    if (const Arg *StdArg = Args.getLastArg(options::OPT__SLASH_std)) {
+      LanguageStandard = llvm::StringSwitch<StringRef>(StdArg->getValue())
+                             .Case("c++14", "-std=c++14")
+                             .Case("c++latest", "-std=c++1z")
+                             .Default("");
+      if (LanguageStandard.empty())
+        D.Diag(clang::diag::warn_drv_unused_argument)
+            << StdArg->getAsString(Args);
+    }
+
+    if (LanguageStandard.empty()) {
+      if (IsMSVC2015Compatible)
+        LanguageStandard = "-std=c++14";
+      else
+        LanguageStandard = "-std=c++11";
+    }
+
+    CmdArgs.push_back(LanguageStandard.data());
   }
 
   // -fno-borland-extensions is default.
@@ -5385,6 +5451,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fno-inline");
 
   if (Arg* InlineArg = Args.getLastArg(options::OPT_finline_functions,
+                                       options::OPT_finline_hint_functions,
                                        options::OPT_fno_inline_functions))
     InlineArg->render(Args, CmdArgs);
 
@@ -9054,6 +9121,7 @@ static void AddLibgcc(const llvm::Triple &Triple, const Driver &D,
                       ArgStringList &CmdArgs, const ArgList &Args) {
   bool isAndroid = Triple.isAndroid();
   bool isCygMing = Triple.isOSCygMing();
+  bool IsIAMCU = Triple.isOSIAMCU();
   bool StaticLibgcc = Args.hasArg(options::OPT_static_libgcc) ||
                       Args.hasArg(options::OPT_static);
   if (!D.CCCIsCXX())
@@ -9070,7 +9138,7 @@ static void AddLibgcc(const llvm::Triple &Triple, const Driver &D,
       CmdArgs.push_back("--no-as-needed");
   }
 
-  if (StaticLibgcc && !isAndroid)
+  if (StaticLibgcc && !isAndroid && !IsIAMCU)
     CmdArgs.push_back("-lgcc_eh");
   else if (!Args.hasArg(options::OPT_shared) && D.CCCIsCXX())
     CmdArgs.push_back("-lgcc");
@@ -9118,6 +9186,8 @@ static void AddRunTimeLibs(const ToolChain &TC, const Driver &D,
 static const char *getLDMOption(const llvm::Triple &T, const ArgList &Args) {
   switch (T.getArch()) {
   case llvm::Triple::x86:
+    if (T.isOSIAMCU())
+      return "elf_iamcu";
     return "elf_i386";
   case llvm::Triple::aarch64:
     return "aarch64linux";
@@ -9177,6 +9247,7 @@ void gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   const llvm::Triple::ArchType Arch = ToolChain.getArch();
   const bool isAndroid = ToolChain.getTriple().isAndroid();
+  const bool IsIAMCU = ToolChain.getTriple().isOSIAMCU();
   const bool IsPIE =
       !Args.hasArg(options::OPT_shared) && !Args.hasArg(options::OPT_static) &&
       (Args.hasArg(options::OPT_pie) || ToolChain.isPIEDefault());
@@ -9253,7 +9324,7 @@ void gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   CmdArgs.push_back(Output.getFilename());
 
   if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nostartfiles)) {
-    if (!isAndroid) {
+    if (!isAndroid && !IsIAMCU) {
       const char *crt1 = nullptr;
       if (!Args.hasArg(options::OPT_shared)) {
         if (Args.hasArg(options::OPT_pg))
@@ -9269,18 +9340,22 @@ void gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back(Args.MakeArgString(ToolChain.GetFilePath("crti.o")));
     }
 
-    const char *crtbegin;
-    if (Args.hasArg(options::OPT_static))
-      crtbegin = isAndroid ? "crtbegin_static.o" : "crtbeginT.o";
-    else if (Args.hasArg(options::OPT_shared))
-      crtbegin = isAndroid ? "crtbegin_so.o" : "crtbeginS.o";
-    else if (IsPIE)
-      crtbegin = isAndroid ? "crtbegin_dynamic.o" : "crtbeginS.o";
-    else
-      crtbegin = isAndroid ? "crtbegin_dynamic.o" : "crtbegin.o";
+    if (IsIAMCU)
+      CmdArgs.push_back(Args.MakeArgString(ToolChain.GetFilePath("crt0.o")));
+    else {
+      const char *crtbegin;
+      if (Args.hasArg(options::OPT_static))
+        crtbegin = isAndroid ? "crtbegin_static.o" : "crtbeginT.o";
+      else if (Args.hasArg(options::OPT_shared))
+        crtbegin = isAndroid ? "crtbegin_so.o" : "crtbeginS.o";
+      else if (IsPIE)
+        crtbegin = isAndroid ? "crtbegin_dynamic.o" : "crtbeginS.o";
+      else
+        crtbegin = isAndroid ? "crtbegin_dynamic.o" : "crtbegin.o";
 
-    if (HasCRTBeginEndFiles)
-      CmdArgs.push_back(Args.MakeArgString(ToolChain.GetFilePath(crtbegin)));
+      if (HasCRTBeginEndFiles)
+        CmdArgs.push_back(Args.MakeArgString(ToolChain.GetFilePath(crtbegin)));
+    }
 
     // Add crtfastmath.o if available and fast math is enabled.
     ToolChain.AddFastMathRuntimeIfAvailable(Args, CmdArgs);
@@ -9382,13 +9457,24 @@ void gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
         CmdArgs.push_back("-lm");
       }
 
+      // Add IAMCU specific libs, if needed.
+      if (IsIAMCU)
+        CmdArgs.push_back("-lgloss");
+
       if (Args.hasArg(options::OPT_static))
         CmdArgs.push_back("--end-group");
       else
         AddRunTimeLibs(ToolChain, D, CmdArgs, Args);
+
+      // Add IAMCU specific libs (outside the group), if needed.
+      if (IsIAMCU) {
+        CmdArgs.push_back("--as-needed");
+        CmdArgs.push_back("-lsoftfp");
+        CmdArgs.push_back("--no-as-needed");
+      }
     }
 
-    if (!Args.hasArg(options::OPT_nostartfiles)) {
+    if (!Args.hasArg(options::OPT_nostartfiles) && !IsIAMCU) {
       const char *crtend;
       if (Args.hasArg(options::OPT_shared))
         crtend = isAndroid ? "crtend_so.o" : "crtendS.o";
@@ -9878,6 +9964,10 @@ void visualstudio::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back(Args.MakeArgString(std::string("-libpath:") +
                                            WindowsSdkLibPath.c_str()));
   }
+
+  if (!C.getDriver().IsCLMode() && Args.hasArg(options::OPT_L))
+    for (const auto &LibPath : Args.getAllArgValues(options::OPT_L))
+      CmdArgs.push_back(Args.MakeArgString("-libpath:" + LibPath));
 
   CmdArgs.push_back("-nologo");
 
