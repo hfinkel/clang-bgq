@@ -1805,6 +1805,7 @@ public:
         case CudaArch::SM_62:
           return "620";
         }
+        llvm_unreachable("unhandled CudaArch");
       }();
       Builder.defineMacro("__CUDA_ARCH__", CUDAArchCode);
     }
