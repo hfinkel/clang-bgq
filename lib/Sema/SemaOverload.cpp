@@ -1199,7 +1199,6 @@ TryUserDefinedConversion(Sema &S, Expr *From, QualType ToType,
   case OR_Success:
   case OR_Deleted:
     ICS.setUserDefined();
-    ICS.UserDefined.Before.setAsIdentityConversion();
     // C++ [over.ics.user]p4:
     //   A conversion of an expression of class type to the same class
     //   type is given Exact Match rank, and a conversion of an
@@ -4540,7 +4539,6 @@ TryReferenceInit(Sema &S, Expr *Init, QualType DeclType,
       return ICS;
     }
 
-    ICS.UserDefined.Before.setAsIdentityConversion();
     ICS.UserDefined.After.ReferenceBinding = true;
     ICS.UserDefined.After.IsLvalueReference = !isRValRef;
     ICS.UserDefined.After.BindsToFunctionLvalue = false;
@@ -12407,8 +12405,7 @@ Sema::BuildCallToMemberFunction(Scope *S, Expr *MemExprE,
   if (CXXDestructorDecl *DD =
           dyn_cast<CXXDestructorDecl>(TheCall->getMethodDecl())) {
     // a->A::f() doesn't go through the vtable, except in AppleKext mode.
-    bool CallCanBeVirtual = !cast<MemberExpr>(NakedMemExpr)->hasQualifier() ||
-                            getLangOpts().AppleKext;
+    bool CallCanBeVirtual = !MemExpr->hasQualifier() || getLangOpts().AppleKext;
     CheckVirtualDtorCall(DD, MemExpr->getLocStart(), /*IsDelete=*/false,
                          CallCanBeVirtual, /*WarnOnNonAbstractTypes=*/true,
                          MemExpr->getMemberLoc());

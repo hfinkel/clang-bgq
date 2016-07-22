@@ -23,6 +23,7 @@
 #include "llvm/ProfileData/Coverage/CoverageMappingWriter.h"
 #include "llvm/ProfileData/InstrProfReader.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Path.h"
 
 using namespace clang;
 using namespace CodeGen;
@@ -172,6 +173,10 @@ public:
       if (!Visited.insert(File).second)
         continue;
 
+      // Do not map FileID's associated with system headers.
+      if (SM.isInSystemHeader(SM.getSpellingLoc(Loc)))
+        continue;
+
       unsigned Depth = 0;
       for (SourceLocation Parent = getIncludeOrExpansionLoc(Loc);
            Parent.isValid(); Parent = getIncludeOrExpansionLoc(Parent))
@@ -250,6 +255,10 @@ public:
 
       SourceLocation LocStart = Region.getStartLoc();
       assert(SM.getFileID(LocStart).isValid() && "region in invalid file");
+
+      // Ignore regions from system headers.
+      if (SM.isInSystemHeader(SM.getSpellingLoc(LocStart)))
+        continue;
 
       auto CovFileID = getCoverageFileID(LocStart);
       // Ignore regions that don't have a file, such as builtin macros.
@@ -912,15 +921,23 @@ struct CounterCoverageMappingBuilder
     // propagate counts into them.
   }
 };
-}
 
-static bool isMachO(const CodeGenModule &CGM) {
+bool isMachO(const CodeGenModule &CGM) {
   return CGM.getTarget().getTriple().isOSBinFormatMachO();
 }
 
-static StringRef getCoverageSection(const CodeGenModule &CGM) {
+StringRef getCoverageSection(const CodeGenModule &CGM) {
   return llvm::getInstrProfCoverageSectionName(isMachO(CGM));
 }
+
+std::string normalizeFilename(StringRef Filename) {
+  llvm::SmallString<256> Path(Filename);
+  llvm::sys::fs::make_absolute(Path);
+  llvm::sys::path::remove_dots(Path, /*remove_dot_dots=*/true);
+  return Path.str().str();
+}
+
+} // end anonymous namespace
 
 static void dump(llvm::raw_ostream &OS, StringRef FunctionName,
                  ArrayRef<CounterExpression> Expressions,
@@ -986,7 +1003,7 @@ void CoverageMappingModuleGen::addFunctionMappingRecord(
     llvm::SmallVector<StringRef, 16> FilenameRefs;
     FilenameRefs.resize(FileEntries.size());
     for (const auto &Entry : FileEntries)
-      FilenameRefs[Entry.second] = Entry.first->getName();
+      FilenameRefs[Entry.second] = normalizeFilename(Entry.first->getName());
     RawCoverageMappingReader Reader(CoverageMapping, FilenameRefs, Filenames,
                                     Expressions, Regions);
     if (Reader.read())
@@ -1007,11 +1024,8 @@ void CoverageMappingModuleGen::emit() {
   FilenameStrs.resize(FileEntries.size());
   FilenameRefs.resize(FileEntries.size());
   for (const auto &Entry : FileEntries) {
-    llvm::SmallString<256> Path(Entry.first->getName());
-    llvm::sys::fs::make_absolute(Path);
-
     auto I = Entry.second;
-    FilenameStrs[I] = std::string(Path.begin(), Path.end());
+    FilenameStrs[I] = normalizeFilename(Entry.first->getName());
     FilenameRefs[I] = FilenameStrs[I];
   }
 

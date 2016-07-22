@@ -910,6 +910,8 @@ void CXXNameMangler::mangleUnscopedTemplateName(
     assert(!AdditionalAbiTags &&
            "template template param cannot have abi tags");
     mangleTemplateParameter(TTP->getIndex());
+  } else if (isa<BuiltinTemplateDecl>(ND)) {
+    mangleUnscopedName(ND, AdditionalAbiTags);
   } else {
     mangleUnscopedName(ND->getTemplatedDecl(), AdditionalAbiTags);
   }
@@ -1469,7 +1471,7 @@ void CXXNameMangler::mangleLocalName(const Decl *D,
     // numbering will be local to the particular argument in which it appears
     // -- other default arguments do not affect its encoding.
     const CXXRecordDecl *CXXRD = dyn_cast<CXXRecordDecl>(RD);
-    if (CXXRD->isLambda()) {
+    if (CXXRD && CXXRD->isLambda()) {
       if (const ParmVarDecl *Parm
               = dyn_cast_or_null<ParmVarDecl>(CXXRD->getLambdaContextDecl())) {
         if (const FunctionDecl *Func
@@ -1715,7 +1717,10 @@ void CXXNameMangler::mangleTemplatePrefix(const TemplateDecl *ND,
     mangleTemplateParameter(TTP->getIndex());
   } else {
     manglePrefix(getEffectiveDeclContext(ND), NoFunction);
-    mangleUnqualifiedName(ND->getTemplatedDecl(), nullptr);
+    if (isa<BuiltinTemplateDecl>(ND))
+      mangleUnqualifiedName(ND, nullptr);
+    else
+      mangleUnqualifiedName(ND->getTemplatedDecl(), nullptr);
   }
 
   addSubstitution(ND);
@@ -3234,6 +3239,7 @@ recurse:
   case Expr::ObjCDictionaryLiteralClass:
   case Expr::ObjCSubscriptRefExprClass:
   case Expr::ObjCIndirectCopyRestoreExprClass:
+  case Expr::ObjCAvailabilityCheckExprClass:
   case Expr::OffsetOfExprClass:
   case Expr::PredefinedExprClass:
   case Expr::ShuffleVectorExprClass:

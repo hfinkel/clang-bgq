@@ -27,10 +27,9 @@
 #include "clang/StaticAnalyzer/Core/PathSensitive/AnalysisManager.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/CallEvent.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/LoopWidening.h"
-#include "llvm/ADT/ImmutableList.h"
 #include "llvm/ADT/Statistic.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/SaveAndRestore.h"
+#include "llvm/Support/raw_ostream.h"
 
 #ifndef NDEBUG
 #include "llvm/Support/GraphWriter.h"
@@ -846,6 +845,8 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
     case Stmt::OMPDistributeParallelForDirectiveClass:
     case Stmt::OMPDistributeParallelForSimdDirectiveClass:
     case Stmt::OMPDistributeSimdDirectiveClass:
+    case Stmt::OMPTargetParallelForSimdDirectiveClass:
+    case Stmt::OMPTargetSimdDirectiveClass:
       llvm_unreachable("Stmt should not be in analyzer evaluation loop");
 
     case Stmt::ObjCSubscriptRefExprClass:
@@ -915,6 +916,7 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
     case Stmt::CXXScalarValueInitExprClass:
     case Stmt::CXXBoolLiteralExprClass:
     case Stmt::ObjCBoolLiteralExprClass:
+    case Stmt::ObjCAvailabilityCheckExprClass:
     case Stmt::FloatingLiteralClass:
     case Stmt::NoInitExprClass:
     case Stmt::SizeOfPackExprClass:

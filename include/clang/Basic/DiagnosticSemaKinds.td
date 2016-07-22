@@ -2503,7 +2503,9 @@ def err_ifunc_resolver_params : Error<
   "ifunc resolver function must have no parameters">;
 def warn_attribute_wrong_decl_type : Warning<
   "%0 attribute only applies to %select{functions|unions|"
-  "variables and functions|functions and methods|parameters|"
+  "variables and functions|"
+  "functions, variables, and Objective-C interfaces|"
+  "functions and methods|parameters|"
   "functions, methods and blocks|functions, methods, and classes|"
   "functions, methods, and parameters|classes|enums|variables|methods|"
   "fields and global variables|structs|parameters and typedefs|variables and typedefs|"
@@ -2511,7 +2513,9 @@ def warn_attribute_wrong_decl_type : Warning<
   "types and namespaces|Objective-C interfaces|methods and properties|"
   "struct or union|struct, union or class|types|"
   "Objective-C instance methods|init methods of interface or class extension declarations|"
-  "variables, functions and classes|Objective-C protocols|"
+  "variables, functions and classes|"
+  "functions, variables, classes, and Objective-C interfaces|"
+  "Objective-C protocols|"
   "functions and global variables|structs, unions, and typedefs|structs and typedefs|"
   "interface or protocol declarations|kernel functions|non-K&R-style functions|"
   "variables, enums, fields and typedefs|functions, methods, enums, and classes|"
@@ -2594,6 +2598,9 @@ def note_overridden_method : Note<
   "overridden method is here">;
 def note_protocol_method : Note<
   "protocol method is here">;
+
+def warn_available_using_star_case : Warning<
+  "using '*' case here, platform %0 is not accounted for">, InGroup<UnguardedAvailability>;
 
 // Thread Safety Attributes
 def warn_invalid_capability_name : Warning<
@@ -6344,6 +6351,24 @@ def ext_typecheck_convert_incompatible_pointer : ExtWarn<
   "; remove *|"
   "; remove &}3">,
   InGroup<IncompatiblePointerTypes>;
+def ext_typecheck_convert_incompatible_function_pointer : ExtWarn<
+  "incompatible function pointer types "
+  "%select{%diff{assigning to $ from $|assigning to different types}0,1"
+  "|%diff{passing $ to parameter of type $|"
+  "passing to parameter of different type}0,1"
+  "|%diff{returning $ from a function with result type $|"
+  "returning from function with different return type}0,1"
+  "|%diff{converting $ to type $|converting between types}0,1"
+  "|%diff{initializing $ with an expression of type $|"
+  "initializing with expression of different type}0,1"
+  "|%diff{sending $ to parameter of type $|"
+  "sending to parameter of different type}0,1"
+  "|%diff{casting $ to type $|casting between types}0,1}2"
+  "%select{|; dereference with *|"
+  "; take the address with &|"
+  "; remove *|"
+  "; remove &}3">,
+  InGroup<IncompatibleFunctionPointerTypes>;
 def ext_typecheck_convert_discards_qualifiers : ExtWarn<
   "%select{%diff{assigning to $ from $|assigning to different types}0,1"
   "|%diff{passing $ to parameter of type $|"
@@ -7503,9 +7528,6 @@ def warn_empty_switch_body : Warning<
 def note_empty_body_on_separate_line : Note<
   "put the semicolon on a separate line to silence this warning">;
 
-def err_init_stmt_not_supported : Error<
-  "C++1z init-statement not yet supported">;
-
 def err_va_start_used_in_non_variadic_function : Error<
   "'va_start' used in function with fixed args">;
 def err_va_start_used_in_wrong_abi_function : Error<
@@ -7893,8 +7915,6 @@ def err_atomic_init_constant : Error<
   " in the declaration statement in the program scope">;
 def err_opencl_implicit_vector_conversion : Error<
   "implicit conversions between vector types (%0 and %1) are not permitted">;
-def err_opencl_dereferencing : Error<
-  "dereferencing pointer of type %0 is not allowed in OpenCL">;
 def err_opencl_block_proto_variadic : Error<
   "invalid block prototype, variadic arguments are not allowed in OpenCL">;
 def err_opencl_invalid_type_array : Error<
@@ -8240,8 +8260,10 @@ def warn_omp_section_is_char : Warning<"array section %select{lower bound|length
   InGroup<CharSubscript>, DefaultIgnore;
 def err_omp_section_incomplete_type : Error<
   "section of pointer to incomplete type %0">;
-def err_omp_section_negative : Error<
-  "section %select{lower bound|length}0 is evaluated to a negative value %1">;
+def err_omp_section_not_subset_of_array : Error<
+  "array section must be a subset of the original array">;
+def err_omp_section_length_negative : Error<
+  "section length is evaluated to a negative value %0">;
 def err_omp_section_length_undefined : Error<
   "section length is unspecified and cannot be inferred because subscripted value is %select{not an array|an array of unknown bound}0">;
 def err_omp_wrong_linear_modifier : Error<
@@ -8332,6 +8354,10 @@ def err_omp_expected_int_param : Error<
   "expected a reference to an integer-typed parameter">;
 def err_omp_at_least_one_motion_clause_required : Error<
   "expected at least one 'to' clause or 'from' clause specified to '#pragma omp target update'">;
+def  err_omp_usedeviceptr_not_a_pointer : Error<
+  "expected pointer or reference to pointer in 'use_device_ptr' clause">;
+def err_omp_argument_type_isdeviceptr : Error <
+  "expected pointer, array, reference to pointer, or reference to array in 'is_device_ptr clause'">;
 def warn_omp_nesting_simd : Warning<
   "OpenMP only allows an ordered construct with the simd clause nested in a simd construct">,
   InGroup<SourceUsesOpenMP>;
