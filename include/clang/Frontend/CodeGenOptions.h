@@ -53,7 +53,8 @@ public:
   enum VectorLibrary {
     NoLibrary, // Don't use any vector library.
     Accelerate, // Use the Accelerate framework.
-    SLEEF // SLEEF SIMD library (BG/Q port)
+    SLEEF, // SLEEF SIMD library (BG/Q port)
+    SVML        // Intel short vector math library.
   };
 
 
