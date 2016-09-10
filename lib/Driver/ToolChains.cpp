@@ -5071,6 +5071,10 @@ Tool *MyriadToolChain::buildLinker() const {
   return new tools::Myriad::Linker(*this);
 }
 
+SanitizerMask MyriadToolChain::getSupportedSanitizers() const {
+  return SanitizerKind::Address;
+}
+
 WebAssembly::WebAssembly(const Driver &D, const llvm::Triple &Triple,
                          const llvm::opt::ArgList &Args)
   : ToolChain(D, Triple, Args) {
