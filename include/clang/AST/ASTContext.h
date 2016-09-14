@@ -114,6 +114,7 @@ class ASTContext : public RefCountedBase<ASTContext> {
   mutable llvm::FoldingSet<DependentTypeOfExprType> DependentTypeOfExprTypes;
   mutable llvm::FoldingSet<DependentDecltypeType> DependentDecltypeTypes;
   mutable llvm::FoldingSet<TemplateTypeParmType> TemplateTypeParmTypes;
+  mutable llvm::FoldingSet<ObjCTypeParamType> ObjCTypeParamTypes;
   mutable llvm::FoldingSet<SubstTemplateTypeParmType>
     SubstTemplateTypeParmTypes;
   mutable llvm::FoldingSet<SubstTemplateTypeParmPackType>
@@ -307,10 +308,18 @@ class ASTContext : public RefCountedBase<ASTContext> {
   /// merged into.
   llvm::DenseMap<Decl*, Decl*> MergedDecls;
 
+  /// The modules into which a definition has been merged, or a map from a
+  /// merged definition to its canonical definition. This is really a union of
+  /// a NamedDecl* and a vector of Module*.
+  struct MergedModulesOrCanonicalDef {
+    llvm::TinyPtrVector<Module*> MergedModules;
+    NamedDecl *CanonicalDef = nullptr;
+  };
+
   /// \brief A mapping from a defining declaration to a list of modules (other
   /// than the owning module of the declaration) that contain merged
   /// definitions of that entity.
-  llvm::DenseMap<NamedDecl*, llvm::TinyPtrVector<Module*>> MergedDefModules;
+  llvm::DenseMap<NamedDecl*, MergedModulesOrCanonicalDef> MergedDefModules;
 
   /// \brief Initializers for a module, in order. Each Decl will be either
   /// something that has a semantic effect on startup (such as a variable with
@@ -893,6 +902,7 @@ public:
   /// and should be visible whenever \p M is visible.
   void mergeDefinitionIntoModule(NamedDecl *ND, Module *M,
                                  bool NotifyListeners = true);
+  void mergeDefinitionIntoModulesOf(NamedDecl *ND, NamedDecl *Other);
   /// \brief Clean up the merged definition list. Call this if you might have
   /// added duplicates into the list.
   void deduplicateMergedDefinitonsFor(NamedDecl *ND);
@@ -903,7 +913,9 @@ public:
     auto MergedIt = MergedDefModules.find(Def);
     if (MergedIt == MergedDefModules.end())
       return None;
-    return MergedIt->second;
+    if (auto *CanonDef = MergedIt->second.CanonicalDef)
+      return getModulesWithMergedDefinition(CanonDef);
+    return MergedIt->second.MergedModules;
   }
 
   /// Add a declaration to the list of declarations that are initialized
@@ -1029,6 +1041,14 @@ public:
   /// space. If T already has an address space specifier, it is silently
   /// replaced.
   QualType getAddrSpaceQualType(QualType T, unsigned AddressSpace) const;
+
+  /// \brief Apply Objective-C protocol qualifiers to the given type.
+  /// \param allowOnPointerType specifies if we can apply protocol
+  /// qualifiers on ObjCObjectPointerType. It can be set to true when
+  /// contructing the canonical type of a Objective-C type parameter.
+  QualType applyObjCProtocolQualifiers(QualType type,
+      ArrayRef<ObjCProtocolDecl *> protocols, bool &hasError,
+      bool allowOnPointerType = false) const;
 
   /// \brief Return the uniqued reference to the type for an Objective-C
   /// gc-qualified type.
@@ -1320,6 +1340,10 @@ public:
                              ArrayRef<QualType> typeArgs,
                              ArrayRef<ObjCProtocolDecl *> protocols,
                              bool isKindOf) const;
+
+  QualType getObjCTypeParamType(const ObjCTypeParamDecl *Decl,
+                                ArrayRef<ObjCProtocolDecl *> protocols,
+                                QualType Canonical = QualType()) const;
   
   bool ObjCObjectAdoptsQTypeProtocols(QualType QT, ObjCInterfaceDecl *Decl);
   /// QIdProtocolsAdoptObjCObjectProtocols - Checks that protocols in

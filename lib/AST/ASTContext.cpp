@@ -890,10 +890,59 @@ void ASTContext::mergeDefinitionIntoModule(NamedDecl *ND, Module *M,
     if (auto *Listener = getASTMutationListener())
       Listener->RedefinedHiddenDefinition(ND, M);
 
-  if (getLangOpts().ModulesLocalVisibility)
-    MergedDefModules[ND].push_back(M);
-  else
+  if (getLangOpts().ModulesLocalVisibility) {
+    auto *Merged = &MergedDefModules[ND];
+    if (auto *CanonDef = Merged->CanonicalDef)
+      Merged = &MergedDefModules[CanonDef];
+    Merged->MergedModules.push_back(M);
+  } else {
+    auto MergedIt = MergedDefModules.find(ND);
+    if (MergedIt != MergedDefModules.end() && MergedIt->second.CanonicalDef)
+      ND = MergedIt->second.CanonicalDef;
     ND->setHidden(false);
+  }
+}
+
+void ASTContext::mergeDefinitionIntoModulesOf(NamedDecl *Def,
+                                              NamedDecl *Other) {
+  // We need to know the owning module of the merge source.
+  assert(Other->isFromASTFile() && "merge of non-imported decl not supported");
+  assert(Def != Other && "merging definition into itself");
+
+  if (!getLangOpts().ModulesLocalVisibility && !Other->isHidden()) {
+    Def->setHidden(false);
+    return;
+  }
+  assert(Other->getImportedOwningModule() &&
+         "hidden, imported declaration has no owning module");
+
+  // Mark Def as the canonical definition of merged definition Other.
+  {
+    auto &OtherMerged = MergedDefModules[Other];
+    assert((!OtherMerged.CanonicalDef || OtherMerged.CanonicalDef == Def) &&
+           "mismatched canonical definitions for declaration");
+    OtherMerged.CanonicalDef = Def;
+  }
+
+  auto &Merged = MergedDefModules[Def];
+  // Grab this again, we potentially just invalidated our reference.
+  auto &OtherMerged = MergedDefModules[Other];
+
+  if (Module *M = Other->getImportedOwningModule())
+    Merged.MergedModules.push_back(M);
+
+  // If this definition had any others merged into it, they're now merged into
+  // the canonical definition instead.
+  if (!OtherMerged.MergedModules.empty()) {
+    assert(!Merged.CanonicalDef && "canonical definition not canonical");
+    if (Merged.MergedModules.empty())
+      Merged.MergedModules = std::move(OtherMerged.MergedModules);
+    else
+      Merged.MergedModules.insert(Merged.MergedModules.end(),
+                                  OtherMerged.MergedModules.begin(),
+                                  OtherMerged.MergedModules.end());
+    OtherMerged.MergedModules.clear();
+  }
 }
 
 void ASTContext::deduplicateMergedDefinitonsFor(NamedDecl *ND) {
@@ -901,7 +950,13 @@ void ASTContext::deduplicateMergedDefinitonsFor(NamedDecl *ND) {
   if (It == MergedDefModules.end())
     return;
 
-  auto &Merged = It->second;
+  if (auto *CanonDef = It->second.CanonicalDef) {
+    It = MergedDefModules.find(CanonDef);
+    if (It == MergedDefModules.end())
+      return;
+  }
+
+  auto &Merged = It->second.MergedModules;
   llvm::DenseSet<Module*> Found;
   for (Module *&M : Merged)
     if (!Found.insert(M).second)
@@ -1859,6 +1914,9 @@ TypeInfo ASTContext::getTypeInfoImpl(const Type *T) const {
 
   case Type::Paren:
     return getTypeInfo(cast<ParenType>(T)->getInnerType().getTypePtr());
+
+  case Type::ObjCTypeParam:
+    return getTypeInfo(cast<ObjCTypeParamType>(T)->desugar().getTypePtr());
 
   case Type::Typedef: {
     const TypedefNameDecl *Typedef = cast<TypedefType>(T)->getDecl();
@@ -3869,6 +3927,116 @@ QualType ASTContext::getObjCObjectType(
   Types.push_back(T);
   ObjCObjectTypes.InsertNode(T, InsertPos);
   return QualType(T, 0);
+}
+
+/// Apply Objective-C protocol qualifiers to the given type.
+/// If this is for the canonical type of a type parameter, we can apply
+/// protocol qualifiers on the ObjCObjectPointerType.
+QualType
+ASTContext::applyObjCProtocolQualifiers(QualType type,
+                  ArrayRef<ObjCProtocolDecl *> protocols, bool &hasError,
+                  bool allowOnPointerType) const {
+  hasError = false;
+
+  if (const ObjCTypeParamType *objT =
+      dyn_cast<ObjCTypeParamType>(type.getTypePtr())) {
+    return getObjCTypeParamType(objT->getDecl(), protocols);
+  }
+
+  // Apply protocol qualifiers to ObjCObjectPointerType.
+  if (allowOnPointerType) {
+    if (const ObjCObjectPointerType *objPtr =
+        dyn_cast<ObjCObjectPointerType>(type.getTypePtr())) {
+      const ObjCObjectType *objT = objPtr->getObjectType();
+      // Merge protocol lists and construct ObjCObjectType.
+      SmallVector<ObjCProtocolDecl*, 8> protocolsVec;
+      protocolsVec.append(objT->qual_begin(),
+                          objT->qual_end());
+      protocolsVec.append(protocols.begin(), protocols.end());
+      ArrayRef<ObjCProtocolDecl *> protocols = protocolsVec;
+      type = getObjCObjectType(
+             objT->getBaseType(),
+             objT->getTypeArgsAsWritten(),
+             protocols,
+             objT->isKindOfTypeAsWritten());
+      return getObjCObjectPointerType(type);
+    }
+  }
+
+  // Apply protocol qualifiers to ObjCObjectType.
+  if (const ObjCObjectType *objT = dyn_cast<ObjCObjectType>(type.getTypePtr())){
+    // FIXME: Check for protocols to which the class type is already
+    // known to conform.
+
+    return getObjCObjectType(objT->getBaseType(),
+                             objT->getTypeArgsAsWritten(),
+                             protocols,
+                             objT->isKindOfTypeAsWritten());
+  }
+
+  // If the canonical type is ObjCObjectType, ...
+  if (type->isObjCObjectType()) {
+    // Silently overwrite any existing protocol qualifiers.
+    // TODO: determine whether that's the right thing to do.
+
+    // FIXME: Check for protocols to which the class type is already
+    // known to conform.
+    return getObjCObjectType(type, { }, protocols, false);
+  }
+
+  // id<protocol-list>
+  if (type->isObjCIdType()) {
+    const ObjCObjectPointerType *objPtr = type->castAs<ObjCObjectPointerType>();
+    type = getObjCObjectType(ObjCBuiltinIdTy, { }, protocols,
+                                 objPtr->isKindOfType());
+    return getObjCObjectPointerType(type);
+  }
+
+  // Class<protocol-list>
+  if (type->isObjCClassType()) {
+    const ObjCObjectPointerType *objPtr = type->castAs<ObjCObjectPointerType>();
+    type = getObjCObjectType(ObjCBuiltinClassTy, { }, protocols,
+                                 objPtr->isKindOfType());
+    return getObjCObjectPointerType(type);
+  }
+
+  hasError = true;
+  return type;
+}
+
+QualType
+ASTContext::getObjCTypeParamType(const ObjCTypeParamDecl *Decl,
+                           ArrayRef<ObjCProtocolDecl *> protocols,
+                           QualType Canonical) const {
+  // Look in the folding set for an existing type.
+  llvm::FoldingSetNodeID ID;
+  ObjCTypeParamType::Profile(ID, Decl, protocols);
+  void *InsertPos = nullptr;
+  if (ObjCTypeParamType *TypeParam =
+      ObjCTypeParamTypes.FindNodeOrInsertPos(ID, InsertPos))
+    return QualType(TypeParam, 0);
+
+  if (Canonical.isNull()) {
+    // We canonicalize to the underlying type.
+    Canonical = getCanonicalType(Decl->getUnderlyingType());
+    if (!protocols.empty()) {
+      // Apply the protocol qualifers.
+      bool hasError;
+      Canonical = applyObjCProtocolQualifiers(Canonical, protocols, hasError,
+          true/*allowOnPointerType*/);
+      assert(!hasError && "Error when apply protocol qualifier to bound type");
+    }
+  }
+
+  unsigned size = sizeof(ObjCTypeParamType);
+  size += protocols.size() * sizeof(ObjCProtocolDecl *);
+  void *mem = Allocate(size, TypeAlignment);
+  ObjCTypeParamType *newType = new (mem)
+    ObjCTypeParamType(Decl, Canonical, protocols);
+
+  Types.push_back(newType);
+  ObjCTypeParamTypes.InsertNode(newType, InsertPos);
+  return QualType(newType, 0);
 }
 
 /// ObjCObjectAdoptsQTypeProtocols - Checks that protocols in IC's
