@@ -2261,7 +2261,7 @@ static void ParsePreprocessorArgs(PreprocessorOptions &Opts, ArgList &Args,
     Opts.ChainedIncludes.emplace_back(A->getValue());
 
   if (Args.getLastArgValue(OPT_target_cpu) == "a2q" &&
-      !Args.hasArg(OPT_mno_qpx)) {
+      !Args.hasArg(OPT_mno_qpx) && !Args.hasArg(OPT_frewrite_includes)) {
     if (DashX == IK_C || DashX == IK_CXX ||
         DashX == IK_ObjC || DashX == IK_ObjCXX ||
         DashX == IK_OpenCL || DashX == IK_CUDA)
