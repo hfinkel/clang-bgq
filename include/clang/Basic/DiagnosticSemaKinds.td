@@ -781,6 +781,9 @@ def note_suppressed_class_declare : Note<
   "class with specified objc_requires_property_definitions attribute is declared here">;
 def err_objc_root_class_subclass : Error<
   "objc_root_class attribute may only be specified on a root class declaration">;
+def err_restricted_superclass_mismatch : Error<
+  "cannot subclass a class that was declared with the "
+  "'objc_subclassing_restricted' attribute">;
 def warn_objc_root_class_missing : Warning<
   "class %0 defined without specifying a base class">,
   InGroup<ObjCRootClass>;
@@ -5632,11 +5635,13 @@ def err_shift_rhs_only_vector : Error<
   "requested shift is a vector of type %0 but the first operand is not a "
   "vector (%1)">;
 
-def warn_logical_not_on_lhs_of_comparison : Warning<
-  "logical not is only applied to the left hand side of this comparison">,
+def warn_logical_not_on_lhs_of_check : Warning<
+  "logical not is only applied to the left hand side of this "
+  "%select{comparison|bitwise operator}0">,
   InGroup<LogicalNotParentheses>;
 def note_logical_not_fix : Note<
-  "add parentheses after the '!' to evaluate the comparison first">;
+  "add parentheses after the '!' to evaluate the "
+  "%select{comparison|bitwise operator}0 first">;
 def note_logical_not_silence_with_parens : Note<
   "add parentheses around left hand side expression to silence this warning">;
 
@@ -8075,8 +8080,6 @@ def err_atomic_init_constant : Error<
   " in the declaration statement in the program scope">;
 def err_opencl_implicit_vector_conversion : Error<
   "implicit conversions between vector types (%0 and %1) are not permitted">;
-def err_opencl_block_proto_variadic : Error<
-  "invalid block prototype, variadic arguments are not allowed in OpenCL">;
 def err_opencl_invalid_type_array : Error<
   "array of %0 type is invalid in OpenCL">;
 def err_opencl_ternary_with_block : Error<
@@ -8088,6 +8091,8 @@ def err_opencl_type_can_only_be_used_as_function_parameter : Error <
 def warn_opencl_attr_deprecated_ignored : Warning <
   "%0 attribute is deprecated and ignored in OpenCL version %1">,
   InGroup<IgnoredAttributes>;
+def err_opencl_variadic_function : Error<
+  "invalid prototype, variadic arguments are not allowed in OpenCL">;
 
 // OpenCL v2.0 s6.13.6 -- Builtin Pipe Functions
 def err_opencl_builtin_pipe_first_arg : Error<
@@ -8626,14 +8631,11 @@ def err_coroutine_unevaluated_context : Error<
   "'%0' cannot be used in an unevaluated context">;
 def err_coroutine_outside_function : Error<
   "'%0' cannot be used outside a function">;
-def err_coroutine_ctor_dtor : Error<
-  "'%1' cannot be used in a %select{constructor|destructor}0">;
-def err_coroutine_constexpr : Error<
-  "'%0' cannot be used in a constexpr function">;
-def err_coroutine_main : Error<
-  "'main' cannot be a coroutine">;
-def err_coroutine_varargs : Error<
-  "'%0' cannot be used in a varargs function">;
+def err_coroutine_invalid_func_context : Error<
+  "'%1' cannot be used in %select{a constructor|a destructor"
+  "|a copy assignment operator|a move assignment operator|the 'main' function"
+  "|a constexpr function|a function with a deduced return type"
+  "|a varargs function}0">;
 def ext_coroutine_without_co_await_co_yield : ExtWarn<
   "'co_return' used in a function "
   "that uses neither 'co_await' nor 'co_yield'">,
