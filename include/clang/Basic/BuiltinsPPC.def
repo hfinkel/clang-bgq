@@ -362,6 +362,9 @@ BUILTIN(__builtin_vsx_xvcpsgnsp, "V4fV4fV4f", "")
 BUILTIN(__builtin_vsx_xvabssp, "V4fV4f", "")
 BUILTIN(__builtin_vsx_xvabsdp, "V2dV2d", "")
 
+BUILTIN(__builtin_vsx_xviexpdp, "V2dV2ULLiV2ULLi", "")
+BUILTIN(__builtin_vsx_xviexpsp, "V4fV4UiV4Ui", "")
+
 // QPX
 
 BUILTIN(__builtin_qpx_qvfabs, "V4dV4d", "")
