@@ -700,6 +700,34 @@ vector unsigned short test54(void) {
 // CHECK-NEXT: ret <8 x i16>
   return vec_popcnt (vusa);
 }
+vector double test55(void) {
+// CHECK-BE: @llvm.ppc.vsx.xviexpdp(<2 x i64> %{{.+}}, <2 x i64>
+// CHECK-BE-NEXT: ret <2 x double>
+// CHECK: @llvm.ppc.vsx.xviexpdp(<2 x i64> %{{.+}}, <2 x i64>
+// CHECK-NEXT: ret <2 x double>
+  return vec_insert_exp (vda,vulb);
+}
+vector double test56(void) {
+// CHECK-BE: @llvm.ppc.vsx.xviexpdp(<2 x i64> %{{.+}}, <2 x i64>
+// CHECK-BE-NEXT: ret <2 x double>
+// CHECK: @llvm.ppc.vsx.xviexpdp(<2 x i64> %{{.+}}, <2 x i64>
+// CHECK-NEXT: ret <2 x double>
+  return vec_insert_exp (vula, vulb);
+}
+vector float test57(void) {
+// CHECK-BE: @llvm.ppc.vsx.xviexpsp(<4 x i32> %{{.+}}, <4 x i32>
+// CHECK-BE-NEXT: ret <4 x float>
+// CHECK: @llvm.ppc.vsx.xviexpsp(<4 x i32> %{{.+}}, <4 x i32>
+// CHECK-NEXT: ret <4 x float>
+  return vec_insert_exp (vfa,vuib);
+}
+vector float test58(void) {
+// CHECK-BE: @llvm.ppc.vsx.xviexpsp(<4 x i32> %{{.+}}, <4 x i32>
+// CHECK-BE-NEXT: ret <4 x float>
+// CHECK: @llvm.ppc.vsx.xviexpsp(<4 x i32> %{{.+}}, <4 x i32>
+// CHECK-NEXT: ret <4 x float>
+  return vec_insert_exp (vuia,vuib);
+}
 signed int test59(void) {
 // CHECK-BE: @llvm.ppc.altivec.vclzlsbb(<16 x i8>
 // CHECK-BE-NEXT: ret i32
@@ -775,31 +803,19 @@ vector unsigned __int128 test68(void) {
 // CHECK-NEXT: ret <1 x i128>
   return vec_parity_lsbb (vsi128a);
 }
-vector double test55(void) {
-// CHECK-BE: @llvm.ppc.vsx.xviexpdp(<2 x i64> %{{.+}}, <2 x i64>
-// CHECK-BE-NEXT: ret <2 x double>
-// CHECK: @llvm.ppc.vsx.xviexpdp(<2 x i64> %{{.+}}, <2 x i64>
-// CHECK-NEXT: ret <2 x double>
-  return vec_insert_exp (vda,vulb);
+
+vector unsigned char test69(void) {
+// CHECK-BE: call <16 x i8> @llvm.ppc.altivec.vabsdub(<16 x i8> {{.+}}, <16 x i8> {{.+}})
+// CHECK: call <16 x i8> @llvm.ppc.altivec.vabsdub(<16 x i8> {{.+}}, <16 x i8> {{.+}})
+  return vec_absd(vuca, vucb);
 }
-vector double test56(void) {
-// CHECK-BE: @llvm.ppc.vsx.xviexpdp(<2 x i64> %{{.+}}, <2 x i64>
-// CHECK-BE-NEXT: ret <2 x double>
-// CHECK: @llvm.ppc.vsx.xviexpdp(<2 x i64> %{{.+}}, <2 x i64>
-// CHECK-NEXT: ret <2 x double>
-  return vec_insert_exp (vula, vulb);
+vector unsigned short test70(void) {
+// CHECK-BE: call <8 x i16> @llvm.ppc.altivec.vabsduh(<8 x i16> {{.+}}, <8 x i16> {{.+}})
+// CHECK: call <8 x i16> @llvm.ppc.altivec.vabsduh(<8 x i16> {{.+}}, <8 x i16> {{.+}})
+  return vec_absd(vusa, vusb);
 }
-vector float test57(void) {
-// CHECK-BE: @llvm.ppc.vsx.xviexpsp(<4 x i32> %{{.+}}, <4 x i32>
-// CHECK-BE-NEXT: ret <4 x float>
-// CHECK: @llvm.ppc.vsx.xviexpsp(<4 x i32> %{{.+}}, <4 x i32>
-// CHECK-NEXT: ret <4 x float>
-  return vec_insert_exp (vfa,vuib);
-}
-vector float test58(void) {
-// CHECK-BE: @llvm.ppc.vsx.xviexpsp(<4 x i32> %{{.+}}, <4 x i32>
-// CHECK-BE-NEXT: ret <4 x float>
-// CHECK: @llvm.ppc.vsx.xviexpsp(<4 x i32> %{{.+}}, <4 x i32>
-// CHECK-NEXT: ret <4 x float>
-  return vec_insert_exp (vuia,vuib);
+vector unsigned int test71(void) {
+// CHECK-BE: call <4 x i32> @llvm.ppc.altivec.vabsduw(<4 x i32> {{.+}}, <4 x i32> {{.+}})
+// CHECK: call <4 x i32> @llvm.ppc.altivec.vabsduw(<4 x i32> {{.+}}, <4 x i32> {{.+}})
+  return vec_absd(vuia, vuib);
 }
