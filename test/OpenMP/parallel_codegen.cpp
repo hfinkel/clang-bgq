@@ -32,8 +32,8 @@ int main (int argc, char **argv) {
 
 // CHECK-LABEL: define {{[a-z\_\b]*[ ]?i32}} @main({{i32[ ]?[a-z]*}} %argc, i8** %argv)
 // CHECK: store i32 %argc, i32* [[ARGC_ADDR:%.+]],
-// CHECK: [[VLA:%.+]] = alloca i32, i64 [[VLA_SIZE:%[^,]+]],
-// CHECK:  call {{.*}}void (%ident_t*, i32, void (i32*, i32*, ...)*, ...) @__kmpc_fork_call(%ident_t* [[DEF_LOC_2]], i32 2, void (i32*, i32*, ...)* bitcast (void (i32*, i32*, i64, i32*)* [[OMP_OUTLINED:@.+]] to void (i32*, i32*, ...)*), i64 [[VLA_SIZE]], i32* [[VLA]])
+// CHECK: [[VLA:%.+]] = alloca i32, i{{[0-9]+}} [[VLA_SIZE:%[^,]+]],
+// CHECK:  call {{.*}}void (%ident_t*, i32, void (i32*, i32*, ...)*, ...) @__kmpc_fork_call(%ident_t* [[DEF_LOC_2]], i32 2, void (i32*, i32*, ...)* bitcast (void (i32*, i32*, i{{[0-9]+}}, i32*)* [[OMP_OUTLINED:@.+]] to void (i32*, i32*, ...)*), i{{[0-9]+}} [[VLA_SIZE]], i32* [[VLA]])
 // CHECK-NEXT:  [[ARGV:%.+]] = load i8**, i8*** {{%[a-z0-9.]+}}
 // CHECK-NEXT:  [[RET:%.+]] = call {{[a-z\_\b]*[ ]?i32}} [[TMAIN:@.+tmain.+]](i8** [[ARGV]])
 // CHECK:       ret i32
@@ -53,11 +53,11 @@ int main (int argc, char **argv) {
 // CHECK-DEBUG:       ret i32
 // CHECK-DEBUG-NEXT:  }
 
-// CHECK:       define internal {{.*}}void [[OMP_OUTLINED]](i32* noalias %.global_tid., i32* noalias %.bound_tid., i64 [[VLA_SIZE:%.+]], i32* [[VLA_ADDR:%[^)]+]])
+// CHECK:       define internal {{.*}}void [[OMP_OUTLINED]](i32* noalias %.global_tid., i32* noalias %.bound_tid., i{{[0-9]+}}{{.*}} [[VLA_SIZE:%.+]], i32* [[VLA_ADDR:%[^)]+]])
 // CHECK-SAME:       #[[FN_ATTRS:[0-9]+]]
 // CHECK:       store i32* [[VLA_ADDR]], i32** [[VLA_PTR_ADDR:%.+]],
 // CHECK:       [[VLA_REF:%.+]] = load i32*, i32** [[VLA_PTR_ADDR]]
-// CHECK:       [[VLA_ELEM_REF:%.+]] = getelementptr inbounds i32, i32* [[VLA_REF]], i64 1
+// CHECK:       [[VLA_ELEM_REF:%.+]] = getelementptr inbounds i32, i32* [[VLA_REF]], i{{[0-9]+}} 1
 // CHECK-NEXT:  [[VLA_ELEM:%.+]] = load i32, i32* [[VLA_ELEM_REF]]
 // CHECK-NEXT:  invoke {{.*}}void [[FOO:@.+foo.+]](i32{{[ ]?[a-z]*}} [[VLA_ELEM]])
 // CHECK:       ret void
