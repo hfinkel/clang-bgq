@@ -299,9 +299,13 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
 
   PassManagerBuilderWrapper PMBuilder(CodeGenOpts, LangOpts);
 
-  // Figure out TargetLibraryInfo.
+  // Figure out TargetLibraryInfo.  This needs to be added to MPM and FPM
+  // manually (and not via PMBuilder), since some passes (eg. InstrProfiling)
+  // are inserted before PMBuilder ones - they'd get the default-constructed
+  // TLI with an unknown target otherwise.
   Triple TargetTriple(TheModule->getTargetTriple());
-  PMBuilder.LibraryInfo = createTLII(TargetTriple, CodeGenOpts);
+  std::unique_ptr<TargetLibraryInfoImpl> TLII(
+      createTLII(TargetTriple, CodeGenOpts));
 
   switch (Inlining) {
   case CodeGenOptions::NoInlining:
@@ -333,6 +337,8 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
   PMBuilder.PrepareForThinLTO = CodeGenOpts.EmitSummaryIndex;
   PMBuilder.PrepareForLTO = CodeGenOpts.PrepareForLTO;
   PMBuilder.RerollLoops = CodeGenOpts.RerollLoops;
+
+  MPM.add(new TargetLibraryInfoWrapperPass(*TLII));
 
   // Add target-specific passes that need to run as early as possible.
   if (TM)
@@ -417,6 +423,7 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
   }
 
   // Set up the per-function pass manager.
+  FPM.add(new TargetLibraryInfoWrapperPass(*TLII));
   if (CodeGenOpts.VerifyModule)
     FPM.add(createVerifierPass());
 
