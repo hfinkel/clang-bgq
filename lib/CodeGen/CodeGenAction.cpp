@@ -75,7 +75,7 @@ namespace clang {
         : Diags(Diags), Action(Action), CodeGenOpts(CodeGenOpts),
           TargetOpts(TargetOpts), LangOpts(LangOpts),
           AsmOutStream(std::move(OS)), Context(nullptr),
-          LLVMIRGeneration("LLVM IR Generation Time"),
+          LLVMIRGeneration("irgen", "LLVM IR Generation Time"),
           LLVMIRGenerationRefCount(0),
           Gen(CreateLLVMCodeGen(Diags, InFile, HeaderSearchOpts, PPOpts,
                                 CodeGenOpts, C, CoverageInfo)) {
@@ -195,7 +195,8 @@ namespace clang {
           return;
         }
 
-        Ctx.setDiagnosticsOutputFile(new yaml::Output(OptRecordFile->os()));
+        Ctx.setDiagnosticsOutputFile(
+            llvm::make_unique<yaml::Output>(OptRecordFile->os()));
 
         if (CodeGenOpts.getProfileUse() != CodeGenOptions::ProfileNone)
           Ctx.setDiagnosticHotnessRequested(true);
@@ -771,11 +772,13 @@ CodeGenAction::CreateASTConsumer(CompilerInstance &CI, StringRef InFile) {
         return nullptr;
       }
 
-      ErrorOr<std::unique_ptr<llvm::Module>> ModuleOrErr =
+      Expected<std::unique_ptr<llvm::Module>> ModuleOrErr =
           getOwningLazyBitcodeModule(std::move(*BCBuf), *VMContext);
-      if (std::error_code EC = ModuleOrErr.getError()) {
-        CI.getDiagnostics().Report(diag::err_cannot_open_file) << LinkBCFile
-                                                               << EC.message();
+      if (!ModuleOrErr) {
+        handleAllErrors(ModuleOrErr.takeError(), [&](ErrorInfoBase &EIB) {
+          CI.getDiagnostics().Report(diag::err_cannot_open_file)
+              << LinkBCFile << EIB.message();
+        });
         LinkModules.clear();
         return nullptr;
       }

@@ -315,8 +315,18 @@ static bool SemaOpenCLBuiltinKernelWorkGroupSize(Sema &S, CallExpr *TheCall) {
   return checkOpenCLBlockArgs(S, BlockArg);
 }
 
+/// Diagnose integer type and any valid implicit convertion to it.
+static bool checkOpenCLEnqueueIntType(Sema &S, Expr *E,
+                                      const QualType &IntType);
+
 static bool checkOpenCLEnqueueLocalSizeArgs(Sema &S, CallExpr *TheCall,
-                                            unsigned Start, unsigned End);
+                                            unsigned Start, unsigned End) {
+  bool IllegalParams = false;
+  for (unsigned I = Start; I <= End; ++I)
+    IllegalParams |= checkOpenCLEnqueueIntType(S, TheCall->getArg(I),
+                                              S.Context.getSizeType());
+  return IllegalParams;
+}
 
 /// OpenCL v2.0, s6.13.17.1 - Check that sizes are provided for all
 /// 'local void*' parameter of passed block.
@@ -451,16 +461,20 @@ static bool SemaOpenCLBuiltinEnqueueKernel(Sema &S, CallExpr *TheCall) {
     Expr *Arg4 = TheCall->getArg(4);
     Expr *Arg5 = TheCall->getArg(5);
 
-    // Fith argument is always passed as pointers to clk_event_t.
-    if (!Arg4->getType()->getPointeeOrArrayElementType()->isClkEventT()) {
+    // Fifth argument is always passed as a pointer to clk_event_t.
+    if (!Arg4->isNullPointerConstant(S.Context,
+                                     Expr::NPC_ValueDependentIsNotNull) &&
+        !Arg4->getType()->getPointeeOrArrayElementType()->isClkEventT()) {
       S.Diag(TheCall->getArg(4)->getLocStart(),
              diag::err_opencl_enqueue_kernel_expected_type)
           << S.Context.getPointerType(S.Context.OCLClkEventTy);
       return true;
     }
 
-    // Sixth argument is always passed as pointers to clk_event_t.
-    if (!(Arg5->getType()->isPointerType() &&
+    // Sixth argument is always passed as a pointer to clk_event_t.
+    if (!Arg5->isNullPointerConstant(S.Context,
+                                     Expr::NPC_ValueDependentIsNotNull) &&
+        !(Arg5->getType()->isPointerType() &&
           Arg5->getType()->getPointeeType()->isClkEventT())) {
       S.Diag(TheCall->getArg(5)->getLocStart(),
              diag::err_opencl_enqueue_kernel_expected_type)
@@ -2141,12 +2155,6 @@ bool Sema::CheckX86BuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
   case X86::BI__builtin_ia32_palignr128:
   case X86::BI__builtin_ia32_palignr256:
   case X86::BI__builtin_ia32_palignr512_mask:
-  case X86::BI__builtin_ia32_alignq512_mask:
-  case X86::BI__builtin_ia32_alignd512_mask:
-  case X86::BI__builtin_ia32_alignd128_mask:
-  case X86::BI__builtin_ia32_alignd256_mask:
-  case X86::BI__builtin_ia32_alignq128_mask:
-  case X86::BI__builtin_ia32_alignq256_mask:
   case X86::BI__builtin_ia32_vcomisd:
   case X86::BI__builtin_ia32_vcomiss:
   case X86::BI__builtin_ia32_shuf_f32x4_mask:
@@ -4180,7 +4188,7 @@ bool Sema::SemaBuiltinARMSpecialReg(unsigned BuiltinID, CallExpr *TheCall,
 
     SmallVector<int, 5> Ranges;
     if (FiveFields)
-      Ranges.append({IsAArch64Builtin ? 1 : 15, 7, 7, 15, 15});
+      Ranges.append({IsAArch64Builtin ? 1 : 15, 7, 15, 15, 7});
     else
       Ranges.append({15, 7, 15});
 
@@ -8504,6 +8512,24 @@ bool AnalyzeBitFieldAssignment(Sema &S, FieldDecl *Bitfield, Expr *Init,
     return false;
 
   // White-list bool bitfields.
+  QualType BitfieldType = Bitfield->getType();
+  if (BitfieldType->isBooleanType())
+     return false;
+
+  if (BitfieldType->isEnumeralType()) {
+    EnumDecl *BitfieldEnumDecl = BitfieldType->getAs<EnumType>()->getDecl();
+    // If the underlying enum type was not explicitly specified as an unsigned
+    // type and the enum contain only positive values, MSVC++ will cause an
+    // inconsistency by storing this as a signed type.
+    if (S.getLangOpts().CPlusPlus11 &&
+        !BitfieldEnumDecl->getIntegerTypeSourceInfo() &&
+        BitfieldEnumDecl->getNumPositiveBits() > 0 &&
+        BitfieldEnumDecl->getNumNegativeBits() == 0) {
+      S.Diag(InitLoc, diag::warn_no_underlying_type_specified_for_enum_bitfield)
+        << BitfieldEnumDecl->getNameAsString();
+    }
+  }
+
   if (Bitfield->getType()->isBooleanType())
     return false;
 
@@ -8533,7 +8559,7 @@ bool AnalyzeBitFieldAssignment(Sema &S, FieldDecl *Bitfield, Expr *Init,
 
   // Compute the value which the bitfield will contain.
   llvm::APSInt TruncatedValue = Value.trunc(FieldWidth);
-  TruncatedValue.setIsSigned(Bitfield->getType()->isSignedIntegerType());
+  TruncatedValue.setIsSigned(BitfieldType->isSignedIntegerType());
 
   // Check whether the stored value is equal to the original value.
   TruncatedValue = TruncatedValue.extend(OriginalWidth);
@@ -9321,25 +9347,19 @@ void AnalyzeImplicitConversions(Sema &S, Expr *OrigE, SourceLocation CC) {
 
 } // end anonymous namespace
 
-static bool checkOpenCLEnqueueLocalSizeArgs(Sema &S, CallExpr *TheCall,
-                                            unsigned Start, unsigned End) {
-  bool IllegalParams = false;
-  for (unsigned I = Start; I <= End; ++I) {
-    QualType Ty = TheCall->getArg(I)->getType();
-    // Taking into account implicit conversions,
-    // allow any integer within 32 bits range
-    if (!Ty->isIntegerType() ||
-        S.Context.getTypeSizeInChars(Ty).getQuantity() > 4) {
-      S.Diag(TheCall->getArg(I)->getLocStart(),
-             diag::err_opencl_enqueue_kernel_invalid_local_size_type);
-      IllegalParams = true;
-    }
-    // Potentially emit standard warnings for implicit conversions if enabled
-    // using -Wconversion.
-    CheckImplicitConversion(S, TheCall->getArg(I), S.Context.UnsignedIntTy,
-                            TheCall->getArg(I)->getLocStart());
+/// Diagnose integer type and any valid implicit convertion to it.
+static bool checkOpenCLEnqueueIntType(Sema &S, Expr *E, const QualType &IntT) {
+  // Taking into account implicit conversions,
+  // allow any integer.
+  if (!E->getType()->isIntegerType()) {
+    S.Diag(E->getLocStart(),
+           diag::err_opencl_enqueue_kernel_invalid_local_size_type);
+    return true;
   }
-  return IllegalParams;
+  // Potentially emit standard warnings for implicit conversions if enabled
+  // using -Wconversion.
+  CheckImplicitConversion(S, E, IntT, E->getLocStart());
+  return false;
 }
 
 // Helper function for Sema::DiagnoseAlwaysNonNullPointer.
@@ -11696,7 +11716,8 @@ void Sema::DiagnoseMisalignedMembers() {
 }
 
 void Sema::DiscardMisalignedMemberAddress(const Type *T, Expr *E) {
-  if (!T->isPointerType())
+  E = E->IgnoreParens();
+  if (!T->isPointerType() && !T->isIntegerType())
     return;
   if (isa<UnaryOperator>(E) &&
       cast<UnaryOperator>(E)->getOpcode() == UO_AddrOf) {
@@ -11705,7 +11726,9 @@ void Sema::DiscardMisalignedMemberAddress(const Type *T, Expr *E) {
       auto MA = std::find(MisalignedMembers.begin(), MisalignedMembers.end(),
                           MisalignedMember(Op));
       if (MA != MisalignedMembers.end() &&
-          Context.getTypeAlignInChars(T->getPointeeType()) <= MA->Alignment)
+          (T->isIntegerType() ||
+           (T->isPointerType() &&
+            Context.getTypeAlignInChars(T->getPointeeType()) <= MA->Alignment)))
         MisalignedMembers.erase(MA);
     }
   }
@@ -11713,28 +11736,103 @@ void Sema::DiscardMisalignedMemberAddress(const Type *T, Expr *E) {
 
 void Sema::RefersToMemberWithReducedAlignment(
     Expr *E,
-    std::function<void(Expr *, RecordDecl *, ValueDecl *, CharUnits)> Action) {
+    std::function<void(Expr *, RecordDecl *, FieldDecl *, CharUnits)> Action) {
   const auto *ME = dyn_cast<MemberExpr>(E);
-  while (ME && isa<FieldDecl>(ME->getMemberDecl())) {
+  if (!ME)
+    return;
+
+  // For a chain of MemberExpr like "a.b.c.d" this list
+  // will keep FieldDecl's like [d, c, b].
+  SmallVector<FieldDecl *, 4> ReverseMemberChain;
+  const MemberExpr *TopME = nullptr;
+  bool AnyIsPacked = false;
+  do {
     QualType BaseType = ME->getBase()->getType();
     if (ME->isArrow())
       BaseType = BaseType->getPointeeType();
     RecordDecl *RD = BaseType->getAs<RecordType>()->getDecl();
 
     ValueDecl *MD = ME->getMemberDecl();
-    bool ByteAligned = Context.getTypeAlignInChars(MD->getType()).isOne();
-    if (ByteAligned) // Attribute packed does not have any effect.
-      break;
+    auto *FD = dyn_cast<FieldDecl>(MD);
+    // We do not care about non-data members.
+    if (!FD || FD->isInvalidDecl())
+      return;
 
-    if (!ByteAligned &&
-        (RD->hasAttr<PackedAttr>() || (MD->hasAttr<PackedAttr>()))) {
-      CharUnits Alignment = std::min(Context.getTypeAlignInChars(MD->getType()),
-                                     Context.getTypeAlignInChars(BaseType));
-      // Notify that this expression designates a member with reduced alignment
-      Action(E, RD, MD, Alignment);
-      break;
+    AnyIsPacked =
+        AnyIsPacked || (RD->hasAttr<PackedAttr>() || MD->hasAttr<PackedAttr>());
+    ReverseMemberChain.push_back(FD);
+
+    TopME = ME;
+    ME = dyn_cast<MemberExpr>(ME->getBase()->IgnoreParens());
+  } while (ME);
+  assert(TopME && "We did not compute a topmost MemberExpr!");
+
+  // Not the scope of this diagnostic.
+  if (!AnyIsPacked)
+    return;
+
+  const Expr *TopBase = TopME->getBase()->IgnoreParenImpCasts();
+  const auto *DRE = dyn_cast<DeclRefExpr>(TopBase);
+  // TODO: The innermost base of the member expression may be too complicated.
+  // For now, just disregard these cases. This is left for future
+  // improvement.
+  if (!DRE && !isa<CXXThisExpr>(TopBase))
+      return;
+
+  // Alignment expected by the whole expression.
+  CharUnits ExpectedAlignment = Context.getTypeAlignInChars(E->getType());
+
+  // No need to do anything else with this case.
+  if (ExpectedAlignment.isOne())
+    return;
+
+  // Synthesize offset of the whole access.
+  CharUnits Offset;
+  for (auto I = ReverseMemberChain.rbegin(); I != ReverseMemberChain.rend();
+       I++) {
+    Offset += Context.toCharUnitsFromBits(Context.getFieldOffset(*I));
+  }
+
+  // Compute the CompleteObjectAlignment as the alignment of the whole chain.
+  CharUnits CompleteObjectAlignment = Context.getTypeAlignInChars(
+      ReverseMemberChain.back()->getParent()->getTypeForDecl());
+
+  // The base expression of the innermost MemberExpr may give
+  // stronger guarantees than the class containing the member.
+  if (DRE && !TopME->isArrow()) {
+    const ValueDecl *VD = DRE->getDecl();
+    if (!VD->getType()->isReferenceType())
+      CompleteObjectAlignment =
+          std::max(CompleteObjectAlignment, Context.getDeclAlign(VD));
+  }
+
+  // Check if the synthesized offset fulfills the alignment.
+  if (Offset % ExpectedAlignment != 0 ||
+      // It may fulfill the offset it but the effective alignment may still be
+      // lower than the expected expression alignment.
+      CompleteObjectAlignment < ExpectedAlignment) {
+    // If this happens, we want to determine a sensible culprit of this.
+    // Intuitively, watching the chain of member expressions from right to
+    // left, we start with the required alignment (as required by the field
+    // type) but some packed attribute in that chain has reduced the alignment.
+    // It may happen that another packed structure increases it again. But if
+    // we are here such increase has not been enough. So pointing the first
+    // FieldDecl that either is packed or else its RecordDecl is,
+    // seems reasonable.
+    FieldDecl *FD = nullptr;
+    CharUnits Alignment;
+    for (FieldDecl *FDI : ReverseMemberChain) {
+      if (FDI->hasAttr<PackedAttr>() ||
+          FDI->getParent()->hasAttr<PackedAttr>()) {
+        FD = FDI;
+        Alignment = std::min(
+            Context.getTypeAlignInChars(FD->getType()),
+            Context.getTypeAlignInChars(FD->getParent()->getTypeForDecl()));
+        break;
+      }
     }
-    ME = dyn_cast<MemberExpr>(ME->getBase());
+    assert(FD && "We did not find a packed FieldDecl!");
+    Action(E, FD->getParent(), FD, Alignment);
   }
 }
 
