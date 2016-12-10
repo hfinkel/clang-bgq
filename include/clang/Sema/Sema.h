@@ -1527,12 +1527,6 @@ public:
     NamedDecl *Previous;
   };
 
-  /// List of decls defined in a function prototype. This contains EnumConstants
-  /// that incorrectly end up in translation unit scope because there is no
-  /// function to pin them on. ActOnFunctionDeclarator reads this list and patches
-  /// them into the FunctionDecl.
-  std::vector<NamedDecl*> DeclsInPrototypeScope;
-
   DeclGroupPtrTy ConvertDeclToDeclGroup(Decl *Ptr, Decl *OwnedType = nullptr);
 
   void DiagnoseUseOfUnimplementedSelectors();
@@ -1982,7 +1976,10 @@ public:
   /// Common ways to introduce type names without a tag for use in diagnostics.
   /// Keep in sync with err_tag_reference_non_tag.
   enum NonTagKind {
-    NTK_Unknown,
+    NTK_NonStruct,
+    NTK_NonClass,
+    NTK_NonUnion,
+    NTK_NonEnum,
     NTK_Typedef,
     NTK_TypeAlias,
     NTK_Template,
@@ -1992,7 +1989,7 @@ public:
 
   /// Given a non-tag type declaration, returns an enum useful for indicating
   /// what kind of non-tag type this is.
-  NonTagKind getNonTagTypeDeclKind(const Decl *D);
+  NonTagKind getNonTagTypeDeclKind(const Decl *D, TagTypeKind TTK);
 
   bool isAcceptableTagRedeclaration(const TagDecl *Previous,
                                     TagTypeKind NewTag, bool isDefinition,
