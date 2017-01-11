@@ -1709,7 +1709,8 @@ public:
 
   static bool adjustContextForLocalExternDecl(DeclContext *&DC);
   void DiagnoseFunctionSpecifiers(const DeclSpec &DS);
-  void CheckShadow(Scope *S, VarDecl *D, const LookupResult& R);
+  NamedDecl *getShadowedDeclaration(const VarDecl *D, const LookupResult &R);
+  void CheckShadow(VarDecl *D, NamedDecl *ShadowedDecl, const LookupResult &R);
   void CheckShadow(Scope *S, VarDecl *D);
 
   /// Warn if 'E', which is an expression that is about to be modified, refers
@@ -1904,7 +1905,8 @@ public:
   /// \brief The parser has processed a module import translated from a
   /// #include or similar preprocessing directive.
   void ActOnModuleInclude(SourceLocation DirectiveLoc, Module *Mod);
-  void BuildModuleInclude(SourceLocation DirectiveLoc, Module *Mod);
+  void BuildModuleInclude(SourceLocation DirectiveLoc, Module *Mod,
+                          bool NoImport);
 
   /// \brief The parsed has entered a submodule.
   void ActOnModuleBegin(SourceLocation DirectiveLoc, Module *Mod);
@@ -8581,6 +8583,12 @@ public:
   /// Called on well-formed '\#pragma omp target teams distribute parallel for
   /// simd' after parsing of the associated statement.
   StmtResult ActOnOpenMPTargetTeamsDistributeParallelForSimdDirective(
+      ArrayRef<OMPClause *> Clauses, Stmt *AStmt, SourceLocation StartLoc,
+      SourceLocation EndLoc,
+      llvm::DenseMap<ValueDecl *, Expr *> &VarsWithImplicitDSA);
+  /// Called on well-formed '\#pragma omp target teams distribute simd' after
+  /// parsing of the associated statement.
+  StmtResult ActOnOpenMPTargetTeamsDistributeSimdDirective(
       ArrayRef<OMPClause *> Clauses, Stmt *AStmt, SourceLocation StartLoc,
       SourceLocation EndLoc,
       llvm::DenseMap<ValueDecl *, Expr *> &VarsWithImplicitDSA);
