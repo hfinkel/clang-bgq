@@ -2238,7 +2238,7 @@ TEST_F(FormatTest, ReflowsComments) {
   EXPECT_EQ("int i; // This long\n"
             "       // line gets\n"
             "       // broken.\n"
-            "       //  \n"
+            "       //\n"
             "       // keep.\n",
             format("int i; // This long line gets broken.\n"
                    "       //  \n"
@@ -4151,9 +4151,22 @@ TEST_F(FormatTest, ExpressionIndentationBreakingBeforeOperators) {
                Style);
 }
 
+TEST_F(FormatTest, EnforcedOperatorWraps) {
+  // Here we'd like to wrap after the || operators, but a comment is forcing an
+  // earlier wrap.
+  verifyFormat("bool x = aaaaa //\n"
+               "         || bbbbb\n"
+               "         //\n"
+               "         || cccc;");
+}
+
 TEST_F(FormatTest, NoOperandAlignment) {
   FormatStyle Style = getLLVMStyle();
   Style.AlignOperands = false;
+  verifyFormat("aaaaaaaaaaaaaa(aaaaaaaaaaaa,\n"
+               "               aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa +\n"
+               "                   aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);",
+               Style);
   Style.BreakBeforeBinaryOperators = FormatStyle::BOS_NonAssignment;
   verifyFormat("bool value = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
                "            + aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
@@ -11741,7 +11754,7 @@ TEST_F(ReplacementTest, SortIncludesAfterReplacement) {
   EXPECT_EQ(Expected, *Result);
 }
 
-TEST_F(FormatTest, AllignTrailingComments) {
+TEST_F(FormatTest, AlignTrailingComments) {
   EXPECT_EQ("#define MACRO(V)                       \\\n"
             "  V(Rt2) /* one more char */           \\\n"
             "  V(Rs)  /* than here  */              \\\n"
@@ -11750,6 +11763,15 @@ TEST_F(FormatTest, AllignTrailingComments) {
                    "V(Rt2)  /* one more char */ \\\n"
                    "V(Rs) /* than here  */    \\\n"
                    "/* comment 3 */         \\\n",
+                   getLLVMStyleWithColumns(40)));
+  EXPECT_EQ("int i = f(abc, // line 1\n"
+            "          d,   // line 2\n"
+            "               // line 3\n"
+            "          b);",
+            format("int i = f(abc, // line 1\n"
+                   "          d, // line 2\n"
+                   "             // line 3\n"
+                   "          b);",
                    getLLVMStyleWithColumns(40)));
 }
 } // end namespace
