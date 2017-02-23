@@ -21,7 +21,7 @@
 // RUN: echo "}"                        >> %t/Inputs/module.map
 
 // Run test
-// RUN: %clang_cc1 -fmodules -fimplicit-module-maps -fmodules-cache-path=%t/cache -x c++ -I%t/Inputs -verify %s -std=c++11
+// RUN: %clang_cc1 -fmodules -fimplicit-module-maps -fmodules-cache-path=%t/cache -x c++ -I%t/Inputs -verify %s -std=c++1z
 
 #if !defined(FIRST) && !defined(SECOND)
 #include "first.h"
@@ -57,6 +57,113 @@ S2 s2;
 #endif
 } // namespace AccessSpecifiers
 
+namespace StaticAssert {
+#if defined(FIRST)
+struct S1 {
+  static_assert(1 == 1, "First");
+};
+#elif defined(SECOND)
+struct S1 {
+  static_assert(1 == 1, "Second");
+};
+#else
+S1 s1;
+// expected-error@second.h:* {{'StaticAssert::S1' has different definitions in different modules; first difference is definition in module 'SecondModule' found static assert with message}}
+// expected-note@first.h:* {{but in 'FirstModule' found static assert with different message}}
+#endif
+
+#if defined(FIRST)
+struct S2 {
+  static_assert(2 == 2, "Message");
+};
+#elif defined(SECOND)
+struct S2 {
+  static_assert(2 == 2);
+};
+#else
+S2 s2;
+// expected-error@second.h:* {{'StaticAssert::S2' has different definitions in different modules; first difference is definition in module 'SecondModule' found static assert with no message}}
+// expected-note@first.h:* {{but in 'FirstModule' found static assert with message}}
+#endif
+
+#if defined(FIRST)
+struct S3 {
+  static_assert(3 == 3, "Message");
+};
+#elif defined(SECOND)
+struct S3 {
+  static_assert(3 != 4, "Message");
+};
+#else
+S3 s3;
+// expected-error@second.h:* {{'StaticAssert::S3' has different definitions in different modules; first difference is definition in module 'SecondModule' found static assert with condition}}
+// expected-note@first.h:* {{but in 'FirstModule' found static assert with different condition}}
+#endif
+
+#if defined(FIRST)
+struct S4 {
+  static_assert(4 == 4, "Message");
+};
+#elif defined(SECOND)
+struct S4 {
+  public:
+};
+#else
+S4 s4;
+// expected-error@second.h:* {{'StaticAssert::S4' has different definitions in different modules; first difference is definition in module 'SecondModule' found public access specifier}}
+// expected-note@first.h:* {{but in 'FirstModule' found static assert}}
+#endif
+}
+
+namespace Field {
+#if defined(FIRST)
+struct S1 {
+  int x;
+  private:
+  int y;
+};
+#elif defined(SECOND)
+struct S1 {
+  int x;
+  int y;
+};
+#else
+S1 s1;
+// expected-error@second.h:* {{'Field::S1' has different definitions in different modules; first difference is definition in module 'SecondModule' found field}}
+// expected-note@first.h:* {{but in 'FirstModule' found private access specifier}}
+#endif
+
+#if defined(FIRST)
+struct S2 {
+  int x;
+  int y;
+};
+#elif defined(SECOND)
+struct S2 {
+  int y;
+  int x;
+};
+#else
+S2 s2;
+// expected-error@second.h:* {{'Field::S2' has different definitions in different modules; first difference is definition in module 'SecondModule' found field 'y'}}
+// expected-note@first.h:* {{but in 'FirstModule' found field 'x'}}
+#endif
+
+#if defined(FIRST)
+struct S3 {
+  double x;
+};
+#elif defined(SECOND)
+struct S3 {
+  int x;
+};
+#else
+S3 s3;
+// expected-error@first.h:* {{'Field::S3::x' from module 'FirstModule' is not present in definition of 'Field::S3' in module 'SecondModule'}}
+// expected-note@second.h:* {{declaration of 'x' does not match}}
+#endif
+}  // namespace Field
+
 // Naive parsing of AST can lead to cycles in processing.  Ensure
 // self-references don't trigger an endless cycles of AST node processing.
 namespace SelfReference {
@@ -90,12 +197,24 @@ struct S {
   public:
   private:
   protected:
+
+  static_assert(1 == 1, "Message");
+  static_assert(2 == 2);
+
+  int x;
+  double y;
 };
 #elif defined(SECOND)
 struct S {
   public:
   private:
   protected:
+
+  static_assert(1 == 1, "Message");
+  static_assert(2 == 2);
+
+  int x;
+  double y;
 };
 #else
 S s;
@@ -107,6 +226,12 @@ struct T {
   private:
   protected:
 
+  static_assert(1 == 1, "Message");
+  static_assert(2 == 2);
+
+  int x;
+  double y;
+
   private:
 };
 #elif defined(SECOND)
@@ -114,6 +239,12 @@ struct T {
   public:
   private:
   protected:
+
+  static_assert(1 == 1, "Message");
+  static_assert(2 == 2);
+
+  int x;
+  double y;
 
   public:
 };
