@@ -1097,6 +1097,8 @@ public:
     return llvm::DebuggerKind::GDB;
   }
 
+  SanitizerMask getSupportedSanitizers() const override;
+
   RuntimeLibType
   GetRuntimeLibType(const llvm::opt::ArgList &Args) const override;
   CXXStdlibType
