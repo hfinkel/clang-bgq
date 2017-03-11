@@ -1166,9 +1166,9 @@ private:
       return false;
 
     // Skip "const" as it does not have an influence on whether this is a name.
-    FormatToken *PreviousNotConst = Tok.Previous;
+    FormatToken *PreviousNotConst = Tok.getPreviousNonComment();
     while (PreviousNotConst && PreviousNotConst->is(tok::kw_const))
-      PreviousNotConst = PreviousNotConst->Previous;
+      PreviousNotConst = PreviousNotConst->getPreviousNonComment();
 
     if (!PreviousNotConst)
       return false;
@@ -1302,7 +1302,8 @@ private:
       return TT_UnaryOperator;
 
     const FormatToken *NextToken = Tok.getNextNonComment();
-    if (!NextToken || NextToken->isOneOf(tok::arrow, tok::equal) ||
+    if (!NextToken ||
+        NextToken->isOneOf(tok::arrow, tok::equal, tok::kw_const) ||
         (NextToken->is(tok::l_brace) && !NextToken->getNextNonComment()))
       return TT_PointerOrReference;
 

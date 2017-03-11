@@ -4965,6 +4965,7 @@ TEST_F(FormatTest, UnderstandsUsesOfStarAndAmp) {
   verifyIndependentOfContext("MACRO(int *i);");
   verifyIndependentOfContext("MACRO(auto *a);");
   verifyIndependentOfContext("MACRO(const A *a);");
+  verifyIndependentOfContext("MACRO(A *const a);");
   verifyIndependentOfContext("MACRO('0' <= c && c <= '9');");
   verifyFormat("void f() { f(float{1}, a * a); }");
   // FIXME: Is there a way to make this work?
@@ -5325,6 +5326,11 @@ TEST_F(FormatTest, BreaksLongDeclarations) {
                "    vector<aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa<\n"
                "        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa>>\n"
                "        aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);");
+
+  verifyFormat("template <typename T> // Templates on own line.\n"
+               "static int            // Some comment.\n"
+               "MyFunction(int a);",
+               getLLVMStyle());
 }
 
 TEST_F(FormatTest, FormatsArrays) {
