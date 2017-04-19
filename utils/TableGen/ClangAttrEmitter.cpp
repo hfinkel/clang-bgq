@@ -1803,12 +1803,12 @@ void PragmaClangAttributeSupport::generateParsingHelpers(raw_ostream &OS) {
 
   // Generate the function that checks for the top-level rules.
   OS << "std::pair<Optional<attr::SubjectMatchRule>, "
-        "llvm::function_ref<Optional<attr::SubjectMatchRule> (StringRef, "
-        "bool)>> isAttributeSubjectMatchRule(StringRef Name) {\n";
+        "Optional<attr::SubjectMatchRule> (*)(StringRef, "
+        "bool)> isAttributeSubjectMatchRule(StringRef Name) {\n";
   OS << "  return "
         "llvm::StringSwitch<std::pair<Optional<attr::SubjectMatchRule>, "
-        "llvm::function_ref<Optional<attr::SubjectMatchRule> (StringRef, "
-        "bool)>>>(Name).\n";
+        "Optional<attr::SubjectMatchRule> (*) (StringRef, "
+        "bool)>>(Name).\n";
   for (const auto &Rule : Rules) {
     if (Rule.isSubRule())
       continue;
@@ -3167,7 +3167,9 @@ emitAttributeMatchRules(PragmaClangAttributeSupport &PragmaAttributeSupport,
     }
     OS << ";\n";
   }
-  OS << "  }\n}\n\n";
+  OS << "  }\n";
+  OS << "  llvm_unreachable(\"Invalid match rule\");\nreturn false;\n";
+  OS << "}\n\n";
 }
 
 static void GenerateDefaultLangOptRequirements(raw_ostream &OS) {

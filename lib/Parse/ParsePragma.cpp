@@ -1014,6 +1014,8 @@ static bool isAbstractAttrMatcherRule(attr::SubjectMatchRule Rule) {
     return IsAbstract;
 #include "clang/Basic/AttrSubMatchRulesList.inc"
   }
+  llvm_unreachable("Invalid attribute subject match rule");
+  return false;
 }
 
 static void diagnoseExpectedAttributeSubjectSubRule(
@@ -1061,9 +1063,8 @@ bool Parser::ParsePragmaAttributeSubjectMatchRuleSet(
       Diag(Tok, diag::err_pragma_attribute_expected_subject_identifier);
       return true;
     }
-    std::pair<
-        Optional<attr::SubjectMatchRule>,
-        llvm::function_ref<Optional<attr::SubjectMatchRule>(StringRef, bool)>>
+    std::pair<Optional<attr::SubjectMatchRule>,
+              Optional<attr::SubjectMatchRule> (*)(StringRef, bool)>
         Rule = isAttributeSubjectMatchRule(Name);
     if (!Rule.first) {
       Diag(Tok, diag::err_pragma_attribute_unknown_subject_rule) << Name;
