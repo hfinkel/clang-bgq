@@ -2366,7 +2366,8 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
 
 static void ParsePreprocessorArgs(PreprocessorOptions &Opts, ArgList &Args,
                                   FileManager &FileMgr,
-                                  DiagnosticsEngine &Diags, InputKind DashX) {
+                                  DiagnosticsEngine &Diags,
+                                  InputKind::Language DashXL) {
   using namespace options;
   Opts.ImplicitPCHInclude = Args.getLastArgValue(OPT_include_pch);
   Opts.ImplicitPTHInclude = Args.getLastArgValue(OPT_include_pth);
@@ -2418,9 +2419,9 @@ static void ParsePreprocessorArgs(PreprocessorOptions &Opts, ArgList &Args,
 
   if (Args.getLastArgValue(OPT_target_cpu) == "a2q" &&
       !Args.hasArg(OPT_mno_qpx) && !Args.hasArg(OPT_frewrite_includes)) {
-    if (DashX == IK_C || DashX == IK_CXX ||
-        DashX == IK_ObjC || DashX == IK_ObjCXX ||
-        DashX == IK_OpenCL || DashX == IK_CUDA)
+    if (DashXL == InputKind::C || DashXL == InputKind::CXX ||
+        DashXL == InputKind::ObjC || DashXL == InputKind::ObjCXX ||
+        DashXL == InputKind::OpenCL || DashXL == InputKind::CUDA)
       Opts.Includes.push_back("qpxintrin.h");
   }
 
@@ -2618,7 +2619,8 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
   // ParsePreprocessorArgs and remove the FileManager
   // parameters from the function and the "FileManager.h" #include.
   FileManager FileMgr(Res.getFileSystemOpts());
-  ParsePreprocessorArgs(Res.getPreprocessorOpts(), Args, FileMgr, Diags, DashX);
+  ParsePreprocessorArgs(Res.getPreprocessorOpts(), Args, FileMgr, Diags,
+                        DashX.getLanguage());
   ParsePreprocessorOutputArgs(Res.getPreprocessorOutputOpts(), Args,
                               Res.getFrontendOpts().ProgramAction);
 
