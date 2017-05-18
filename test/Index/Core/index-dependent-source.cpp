@@ -122,3 +122,22 @@ void indexDependentOverloads(const TemplateClass<T, S> &object) {
   object.overload1(Y());
 // CHECK-NOT: [[@LINE-1]]
 }
+
+template<typename T> struct UndefinedTemplateClass;
+
+template<typename T>
+void undefinedTemplateLookup(UndefinedTemplateClass<T> &x) {
+// Shouldn't crash!
+  x.lookup;
+  typename UndefinedTemplateClass<T>::Type y;
+}
+
+template<typename T>
+struct UserOfUndefinedTemplateClass: UndefinedTemplateClass<T> { };
+
+template<typename T>
+void undefinedTemplateLookup2(UserOfUndefinedTemplateClass<T> &x) {
+// Shouldn't crash!
+  x.lookup;
+  typename UserOfUndefinedTemplateClass<T>::Type y;
+}
