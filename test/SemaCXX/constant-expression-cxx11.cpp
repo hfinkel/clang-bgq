@@ -328,7 +328,7 @@ struct Str {
 
 extern char externalvar[];
 constexpr bool constaddress = (void *)externalvar == (void *)0x4000UL; // expected-error {{must be initialized by a constant expression}} expected-note {{reinterpret_cast}}
-constexpr bool litaddress = "foo" == "foo"; // expected-error {{must be initialized by a constant expression}} expected-warning {{unspecified}}
+constexpr bool litaddress = "foo" == "foo"; // expected-error {{must be initialized by a constant expression}}
 static_assert(0 != "foo", "");
 
 }
@@ -364,7 +364,7 @@ void foo() {
   constexpr B b3 { { 1 }, { 2 } }; // expected-error {{constant expression}} expected-note {{reference to temporary}} expected-note {{here}}
 }
 
-constexpr B &&b4 = ((1, 2), 3, 4, B { {10}, {{20}} }); // expected-warning 4{{unused}}
+constexpr B &&b4 = ((1, 2), 3, 4, B { {10}, {{20}} });
 static_assert(&b4 != &b2, "");
 
 // Proposed DR: copy-elision doesn't trigger lifetime extension.
@@ -604,11 +604,27 @@ static_assert(NATDCArray{}[1][1].n == 0, "");
 
 }
 
+// Tests for indexes into arrays of unknown bounds.
+namespace ArrayOfUnknownBound {
+  // This is a corner case of the language where it's not clear whether this
+  // should be an error: When we see the initializer for Z::a, the bounds of
+  // Z::b aren't known yet, but they will be known by the end of the translation
+  // unit, so the compiler can in theory check the indexing into Z::b.
+  // For the time being, as long as this is unclear, we want to make sure that
+  // this compiles.
+  struct Z {
+    static const void *const a[];
+    static const void *const b[];
+  };
+  constexpr const void *Z::a[] = {&b[0], &b[1]};
+  constexpr const void *Z::b[] = {&a[0], &a[1]};
+}
+
 namespace DependentValues {
 
 struct I { int n; typedef I V[10]; };
 I::V x, y;
-int g();
+int g(); // expected-note {{declared here}}
 template<bool B, typename T> struct S : T {
   int k;
   void f() {
@@ -616,12 +632,22 @@ template<bool B, typename T> struct S : T {
     I &i = cells[k];
     switch (i.n) {}
 
-    // FIXME: We should be able to diagnose this.
-    constexpr int n = g();
+    constexpr int n = g(); // expected-error {{must be initialized by a constant expression}} expected-note {{non-constexpr function 'g'}}
 
     constexpr int m = this->g(); // ok, could be constexpr
   }
 };
+
+extern const int n;
+template<typename T> void f() {
+  // This is ill-formed, because a hypothetical instantiation at the point of
+  // template definition would be ill-formed due to a construct that does not
+  // depend on a template parameter.
+  constexpr int k = n; // expected-error {{must be initialized by a constant expression}}
+}
+// It doesn't matter that the instantiation could later become valid:
+constexpr int n = 4;
+template void f<int>();
 
 }
 
@@ -1939,7 +1965,7 @@ namespace NeverConstantTwoWays {
 
   constexpr int n = // expected-error {{must be initialized by a constant expression}}
       (int *)(long)&n == &n ? // expected-note {{reinterpret_cast}}
-        1 / 0 : // expected-warning {{division by zero}}
+        1 / 0 :
         0;
 }
 

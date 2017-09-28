@@ -490,6 +490,17 @@ namespace {
       OS << "}\n";
     }
 
+    void writeASTVisitorTraversal(raw_ostream &OS) const override {
+      StringRef Name = getUpperName();
+      OS << "  if (A->is" << Name << "Expr()) {\n"
+         << "    if (!getDerived().TraverseStmt(A->get" << Name << "Expr()))\n" 
+         << "      return false;\n" 
+         << "  } else if (auto *TSI = A->get" << Name << "Type()) {\n"
+         << "    if (!getDerived().TraverseTypeLoc(TSI->getTypeLoc()))\n"
+         << "      return false;\n" 
+         << "  }\n";
+    }
+
     void writeCloneArgs(raw_ostream &OS) const override {
       OS << "is" << getLowerName() << "Expr, is" << getLowerName()
          << "Expr ? static_cast<void*>(" << getLowerName()
@@ -630,6 +641,10 @@ namespace {
          << "A->" << getLowerName() << "_size()";
     }
 
+    void writeASTVisitorTraversal(raw_ostream &OS) const override {
+      // FIXME: Traverse the elements.
+    }
+
     void writeCtorBody(raw_ostream &OS) const override {
       OS << "    std::copy(" << getUpperName() << ", " << getUpperName()
          << " + " << ArgSizeName << ", " << ArgName << ");\n";
@@ -718,9 +733,9 @@ namespace {
   };
 
   // Unique the enums, but maintain the original declaration ordering.
-  std::vector<std::string>
-  uniqueEnumsInOrder(const std::vector<std::string> &enums) {
-    std::vector<std::string> uniques;
+  std::vector<StringRef>
+  uniqueEnumsInOrder(const std::vector<StringRef> &enums) {
+    std::vector<StringRef> uniques;
     SmallDenseSet<StringRef, 8> unique_set;
     for (const auto &i : enums) {
       if (unique_set.insert(i).second)
@@ -731,7 +746,8 @@ namespace {
 
   class EnumArgument : public Argument {
     std::string type;
-    std::vector<std::string> values, enums, uniques;
+    std::vector<StringRef> values, enums, uniques;
+
   public:
     EnumArgument(const Record &Arg, StringRef Attr)
       : Argument(Arg, Attr), type(Arg.getValueAsString("Type")),
@@ -850,7 +866,7 @@ namespace {
   
   class VariadicEnumArgument: public VariadicArgument {
     std::string type, QualifiedTypeName;
-    std::vector<std::string> values, enums, uniques;
+    std::vector<StringRef> values, enums, uniques;
 
   protected:
     void writeValueImpl(raw_ostream &OS) const override {
@@ -1150,6 +1166,12 @@ namespace {
       OS << "  " << getType() << " get" << getUpperName() << "Loc() const {\n";
       OS << "    return " << getLowerName() << ";\n";
       OS << "  }";
+    }
+
+    void writeASTVisitorTraversal(raw_ostream &OS) const override {
+      OS << "  if (auto *TSI = A->get" << getUpperName() << "Loc())\n";
+      OS << "    if (!getDerived().TraverseTypeLoc(TSI->getTypeLoc()))\n";
+      OS << "      return false;\n";
     }
 
     void writeTemplateInstantiationArgs(raw_ostream &OS) const override {
@@ -1591,8 +1613,9 @@ struct AttributeSubjectMatchRule {
   }
 
   std::string getEnumValueName() const {
-    std::string Result =
-        "SubjectMatchRule_" + MetaSubject->getValueAsString("Name");
+    SmallString<128> Result;
+    Result += "SubjectMatchRule_";
+    Result += MetaSubject->getValueAsString("Name");
     if (isSubRule()) {
       Result += "_";
       if (isNegatedSubRule())
@@ -1601,7 +1624,7 @@ struct AttributeSubjectMatchRule {
     }
     if (isAbstractRule())
       Result += "_abstract";
-    return Result;
+    return Result.str();
   }
 
   std::string getEnumValue() const { return "attr::" + getEnumValueName(); }
@@ -2603,7 +2626,7 @@ void EmitClangAttrPCHWrite(RecordKeeper &Records, raw_ostream &OS) {
 // append a unique suffix to distinguish this set of target checks from other
 // TargetSpecificAttr records.
 static void GenerateTargetSpecificAttrChecks(const Record *R,
-                                             std::vector<std::string> &Arches,
+                                             std::vector<StringRef> &Arches,
                                              std::string &Test,
                                              std::string *FnName) {
   // It is assumed that there will be an llvm::Triple object
@@ -2613,8 +2636,9 @@ static void GenerateTargetSpecificAttrChecks(const Record *R,
   Test += "(";
 
   for (auto I = Arches.begin(), E = Arches.end(); I != E; ++I) {
-    std::string Part = *I;
-    Test += "T.getArch() == llvm::Triple::" + Part;
+    StringRef Part = *I;
+    Test += "T.getArch() == llvm::Triple::";
+    Test += Part;
     if (I + 1 != E)
       Test += " || ";
     if (FnName)
@@ -2627,11 +2651,12 @@ static void GenerateTargetSpecificAttrChecks(const Record *R,
     // We know that there was at least one arch test, so we need to and in the
     // OS tests.
     Test += " && (";
-    std::vector<std::string> OSes = R->getValueAsListOfStrings("OSes");
+    std::vector<StringRef> OSes = R->getValueAsListOfStrings("OSes");
     for (auto I = OSes.begin(), E = OSes.end(); I != E; ++I) {
-      std::string Part = *I;
+      StringRef Part = *I;
 
-      Test += "T.getOS() == llvm::Triple::" + Part;
+      Test += "T.getOS() == llvm::Triple::";
+      Test += Part;
       if (I + 1 != E)
         Test += " || ";
       if (FnName)
@@ -2643,10 +2668,11 @@ static void GenerateTargetSpecificAttrChecks(const Record *R,
   // If one or more CXX ABIs are specified, check those as well.
   if (!R->isValueUnset("CXXABIs")) {
     Test += " && (";
-    std::vector<std::string> CXXABIs = R->getValueAsListOfStrings("CXXABIs");
+    std::vector<StringRef> CXXABIs = R->getValueAsListOfStrings("CXXABIs");
     for (auto I = CXXABIs.begin(), E = CXXABIs.end(); I != E; ++I) {
-      std::string Part = *I;
-      Test += "Target.getCXXABI().getKind() == TargetCXXABI::" + Part;
+      StringRef Part = *I;
+      Test += "Target.getCXXABI().getKind() == TargetCXXABI::";
+      Test += Part;
       if (I + 1 != E)
         Test += " || ";
       if (FnName)
@@ -2684,7 +2710,7 @@ static void GenerateHasAttrSpellingStringSwitch(
     std::string Test;
     if (Attr->isSubClassOf("TargetSpecificAttr")) {
       const Record *R = Attr->getValueAsDef("Target");
-      std::vector<std::string> Arches = R->getValueAsListOfStrings("Arches");
+      std::vector<StringRef> Arches = R->getValueAsListOfStrings("Arches");
       GenerateTargetSpecificAttrChecks(R, Arches, Test, nullptr);
 
       // If this is the C++11 variety, also add in the LangOpts test.
@@ -3323,7 +3349,7 @@ static std::string GenerateTargetRequirements(const Record &Attr,
 
   // Get the list of architectures to be tested for.
   const Record *R = Attr.getValueAsDef("Target");
-  std::vector<std::string> Arches = R->getValueAsListOfStrings("Arches");
+  std::vector<StringRef> Arches = R->getValueAsListOfStrings("Arches");
   if (Arches.empty()) {
     PrintError(Attr.getLoc(), "Empty list of target architectures for a "
                               "target-specific attr");
@@ -3340,9 +3366,10 @@ static std::string GenerateTargetRequirements(const Record &Attr,
     std::string APK = Attr.getValueAsString("ParseKind");
     for (const auto &I : Dupes) {
       if (I.first == APK) {
-        std::vector<std::string> DA = I.second->getValueAsDef("Target")
-                                          ->getValueAsListOfStrings("Arches");
-        std::move(DA.begin(), DA.end(), std::back_inserter(Arches));
+        std::vector<StringRef> DA =
+            I.second->getValueAsDef("Target")->getValueAsListOfStrings(
+                "Arches");
+        Arches.insert(Arches.end(), DA.begin(), DA.end());
       }
     }
   }

@@ -341,6 +341,9 @@ private:
   /// A queue of (optional) vtables to consider emitting.
   std::vector<const CXXRecordDecl*> DeferredVTables;
 
+  /// A queue of (optional) vtables that may be emitted opportunistically.
+  std::vector<const CXXRecordDecl *> OpportunisticVTables;
+
   /// List of global values which are required to be present in the object file;
   /// bitcast to i8*. This is used for forcing visibility of symbols which may
   /// otherwise be optimized out.
@@ -426,7 +429,7 @@ private:
   llvm::SmallPtrSet<clang::Module *, 16> EmittedModuleInitializers;
 
   /// \brief A vector of metadata strings.
-  SmallVector<llvm::Metadata *, 16> LinkerOptionsMetadata;
+  SmallVector<llvm::MDNode *, 16> LinkerOptionsMetadata;
 
   /// @name Cache for Objective-C runtime types
   /// @{
@@ -450,7 +453,7 @@ private:
 
   bool isTriviallyRecursive(const FunctionDecl *F);
   bool shouldEmitFunction(GlobalDecl GD);
-
+  bool shouldOpportunisticallyEmitVTables();
   /// Map used to be sure we don't emit the same CompoundLiteral twice.
   llvm::DenseMap<const CompoundLiteralExpr *, llvm::GlobalVariable *>
       EmittedCompoundLiterals;
@@ -509,6 +512,9 @@ public:
 
   /// Finalize LLVM code generation.
   void Release();
+
+  /// Return true if we should emit location information for expressions.
+  bool getExpressionLocationsEnabled() const;
 
   /// Return a reference to the configured Objective-C runtime.
   CGObjCRuntime &getObjCRuntime() {
@@ -707,11 +713,15 @@ public:
                                      SourceLocation Loc = SourceLocation(),
                                      bool TLS = false);
 
-  /// Return the address space of the underlying global variable for D, as
+  /// Return the AST address space of the underlying global variable for D, as
   /// determined by its declaration. Normally this is the same as the address
   /// space of D's type, but in CUDA, address spaces are associated with
-  /// declarations, not types.
-  unsigned GetGlobalVarAddressSpace(const VarDecl *D, unsigned AddrSpace);
+  /// declarations, not types. If D is nullptr, return the default address
+  /// space for global variable.
+  ///
+  /// For languages without explicit address spaces, if D has default address
+  /// space, target-specific global or constant address space may be returned.
+  unsigned GetGlobalVarAddressSpace(const VarDecl *D);
 
   /// Return the llvm::Constant for the address of the given global variable.
   /// If Ty is non-null and if the global doesn't exist, then it will be created
@@ -935,27 +945,6 @@ public:
 
   llvm::Constant *getMemberPointerConstant(const UnaryOperator *e);
 
-  /// Try to emit the initializer for the given declaration as a constant;
-  /// returns 0 if the expression cannot be emitted as a constant.
-  llvm::Constant *EmitConstantInit(const VarDecl &D,
-                                   CodeGenFunction *CGF = nullptr);
-
-  /// Try to emit the given expression as a constant; returns 0 if the
-  /// expression cannot be emitted as a constant.
-  llvm::Constant *EmitConstantExpr(const Expr *E, QualType DestType,
-                                   CodeGenFunction *CGF = nullptr);
-
-  /// Emit the given constant value as a constant, in the type's scalar
-  /// representation.
-  llvm::Constant *EmitConstantValue(const APValue &Value, QualType DestType,
-                                    CodeGenFunction *CGF = nullptr);
-
-  /// Emit the given constant value as a constant, in the type's memory
-  /// representation.
-  llvm::Constant *EmitConstantValueForMemory(const APValue &Value,
-                                             QualType DestType,
-                                             CodeGenFunction *CGF = nullptr);
-
   /// \brief Emit type info if type of an expression is a variably modified
   /// type. Also emit proper debug info for cast types.
   void EmitExplicitCastExprType(const ExplicitCastExpr *E,
@@ -1055,13 +1044,14 @@ public:
 
   void RefreshTypeCacheForClass(const CXXRecordDecl *Class);
 
-  /// \brief Appends Opts to the "Linker Options" metadata value.
+  /// \brief Appends Opts to the "llvm.linker.options" metadata value.
   void AppendLinkerOptions(StringRef Opts);
 
   /// \brief Appends a detect mismatch command to the linker options.
   void AddDetectMismatch(StringRef Name, StringRef Value);
 
-  /// \brief Appends a dependent lib to the "Linker Options" metadata value.
+  /// \brief Appends a dependent lib to the "llvm.linker.options" metadata
+  /// value.
   void AddDependentLib(StringRef Lib);
 
   llvm::GlobalVariable::LinkageTypes getFunctionLinkage(GlobalDecl GD);
@@ -1116,7 +1106,8 @@ public:
   /// annotations are emitted during finalization of the LLVM code.
   void AddGlobalAnnotations(const ValueDecl *D, llvm::GlobalValue *GV);
 
-  bool isInSanitizerBlacklist(llvm::Function *Fn, SourceLocation Loc) const;
+  bool isInSanitizerBlacklist(SanitizerMask Kind, llvm::Function *Fn,
+                              SourceLocation Loc) const;
 
   bool isInSanitizerBlacklist(llvm::GlobalVariable *GV, SourceLocation Loc,
                               QualType Ty,
@@ -1231,7 +1222,8 @@ private:
 
   /// Set function attributes for a function declaration.
   void SetFunctionAttributes(GlobalDecl GD, llvm::Function *F,
-                             bool IsIncompleteFunction, bool IsThunk);
+                             bool IsIncompleteFunction, bool IsThunk,
+                             ForDefinition_t IsForDefinition);
 
   void EmitGlobalDefinition(GlobalDecl D, llvm::GlobalValue *GV = nullptr);
 
@@ -1278,6 +1270,12 @@ private:
   /// Emit any needed decls for which code generation was deferred.
   void EmitDeferred();
 
+  /// Try to emit external vtables as available_externally if they have emitted
+  /// all inlined virtual functions.  It runs after EmitDeferred() and therefore
+  /// is not allowed to create new references to things that need to be emitted
+  /// lazily.
+  void EmitVTablesOpportunistically();
+
   /// Call replaceAllUsesWith on all pairs in Replacements.
   void applyReplacements();
 
@@ -1311,6 +1309,9 @@ private:
   /// Emits target specific Metadata for global declarations.
   void EmitTargetMetadata();
 
+  /// Emits OpenCL specific Metadata e.g. OpenCL version.
+  void EmitOpenCLMetadata();
+
   /// Emit the llvm.gcov metadata used to tell LLVM where to emit the .gcno and
   /// .gcda files in a way that persists in .bc files.
   void EmitCoverageFile();
@@ -1338,6 +1339,7 @@ private:
                                   bool AttrOnCallSite,
                                   llvm::AttrBuilder &FuncAttrs);
 };
+
 }  // end namespace CodeGen
 }  // end namespace clang
 

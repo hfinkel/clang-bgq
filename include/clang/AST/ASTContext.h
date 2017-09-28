@@ -39,6 +39,7 @@
 #include "clang/Basic/SanitizerBlacklist.h"
 #include "clang/Basic/SourceLocation.h"
 #include "clang/Basic/Specifiers.h"
+#include "clang/Basic/TargetInfo.h"
 #include "clang/Basic/XRayLists.h"
 #include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -89,7 +90,6 @@ class DiagnosticsEngine;
 class Expr;
 class MangleNumberingContext;
 class MaterializeTemporaryExpr;
-class TargetInfo;
 // Decls
 class MangleContext;
 class ObjCIvarDecl;
@@ -465,7 +465,7 @@ private:
   mutable BuiltinTemplateDecl *MakeIntegerSeqDecl;
   mutable BuiltinTemplateDecl *TypePackElementDecl;
 
-  /// \brief The associated SourceManager object.a
+  /// \brief The associated SourceManager object.
   SourceManager &SourceMgr;
 
   /// \brief The language options used to create the AST associated with
@@ -973,6 +973,7 @@ public:
   CanQualType UnsignedLongLongTy, UnsignedInt128Ty;
   CanQualType FloatTy, DoubleTy, LongDoubleTy, Float128Ty;
   CanQualType HalfTy; // [OpenCL 6.1.1.1], ARM NEON
+  CanQualType Float16Ty; // C11 extension ISO/IEC TS 18661-3
   CanQualType FloatComplexTy, DoubleComplexTy, LongDoubleComplexTy;
   CanQualType Float128ComplexTy;
   CanQualType VoidPtrTy, NullPtrTy;
@@ -1441,6 +1442,10 @@ public:
   /// The sizeof operator requires this (C99 6.5.3.4p4).
   CanQualType getSizeType() const;
 
+  /// \brief Return the unique signed counterpart of 
+  /// the integer type corresponding to size_t.
+  CanQualType getSignedSizeType() const;
+
   /// \brief Return the unique type for "intmax_t" (C99 7.18.1.5), defined in
   /// <stdint.h>.
   CanQualType getIntMaxType() const;
@@ -1575,6 +1580,24 @@ public:
     }
 
     return NSCopyingName;
+  }
+
+  CanQualType getNSUIntegerType() const {
+    assert(Target && "Expected target to be initialized");
+    const llvm::Triple &T = Target->getTriple();
+    // Windows is LLP64 rather than LP64
+    if (T.isOSWindows() && T.isArch64Bit())
+      return UnsignedLongLongTy;
+    return UnsignedLongTy;
+  }
+
+  CanQualType getNSIntegerType() const {
+    assert(Target && "Expected target to be initialized");
+    const llvm::Triple &T = Target->getTriple();
+    // Windows is LLP64 rather than LP64
+    if (T.isOSWindows() && T.isArch64Bit())
+      return LongLongTy;
+    return LongTy;
   }
 
   /// Retrieve the identifier 'bool'.
@@ -2050,6 +2073,11 @@ public:
   /// Get the offset of a FieldDecl or IndirectFieldDecl, in bits.
   uint64_t getFieldOffset(const ValueDecl *FD) const;
 
+  /// Get the offset of an ObjCIvarDecl in bits.
+  uint64_t lookupFieldBitOffset(const ObjCInterfaceDecl *OID,
+                                const ObjCImplementationDecl *ID,
+                                const ObjCIvarDecl *Ivar) const;
+
   bool isNearlyEmpty(const CXXRecordDecl *RD) const;
 
   VTableContextBase *getVTableContext();
@@ -2385,9 +2413,30 @@ public:
 
   QualType mergeObjCGCQualifiers(QualType, QualType);
 
-  bool doFunctionTypesMatchOnExtParameterInfos(
-         const FunctionProtoType *FromFunctionType,
-         const FunctionProtoType *ToFunctionType);
+  /// This function merges the ExtParameterInfo lists of two functions. It
+  /// returns true if the lists are compatible. The merged list is returned in
+  /// NewParamInfos.
+  ///
+  /// \param FirstFnType The type of the first function.
+  ///
+  /// \param SecondFnType The type of the second function.
+  ///
+  /// \param CanUseFirst This flag is set to true if the first function's
+  /// ExtParameterInfo list can be used as the composite list of
+  /// ExtParameterInfo.
+  ///
+  /// \param CanUseSecond This flag is set to true if the second function's
+  /// ExtParameterInfo list can be used as the composite list of
+  /// ExtParameterInfo.
+  ///
+  /// \param NewParamInfos The composite list of ExtParameterInfo. The list is
+  /// empty if none of the flags are set.
+  ///
+  bool mergeExtParameterInfo(
+      const FunctionProtoType *FirstFnType,
+      const FunctionProtoType *SecondFnType,
+      bool &CanUseFirst, bool &CanUseSecond,
+      SmallVectorImpl<FunctionProtoType::ExtParameterInfo> &NewParamInfos);
 
   void ResetObjCLayout(const ObjCContainerDecl *CD);
 

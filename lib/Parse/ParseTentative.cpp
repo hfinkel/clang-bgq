@@ -1026,6 +1026,7 @@ Parser::isExpressionOrTypeSpecifierSimple(tok::TokenKind Kind) {
   case tok::kw_char:
   case tok::kw_const:
   case tok::kw_double:
+  case tok::kw__Float16:
   case tok::kw___float128:
   case tok::kw_enum:
   case tok::kw_half:
@@ -1450,6 +1451,7 @@ Parser::isCXXDeclarationSpecifier(Parser::TPResult BracedCastResult,
       return TPResult::False;
     }
     // If that succeeded, fallthrough into the generic simple-type-id case.
+    LLVM_FALLTHROUGH;
 
     // The ambiguity resides in a simple-type-specifier/typename-specifier
     // followed by a '('. The '(' could either be the start of:
@@ -1492,6 +1494,7 @@ Parser::isCXXDeclarationSpecifier(Parser::TPResult BracedCastResult,
       
       return TPResult::True;
     }
+    LLVM_FALLTHROUGH;
       
   case tok::kw_char:
   case tok::kw_wchar_t:
@@ -1508,6 +1511,7 @@ Parser::isCXXDeclarationSpecifier(Parser::TPResult BracedCastResult,
   case tok::kw_half:
   case tok::kw_float:
   case tok::kw_double:
+  case tok::kw__Float16:
   case tok::kw___float128:
   case tok::kw_void:
   case tok::annot_decltype:
@@ -1598,6 +1602,7 @@ bool Parser::isCXXDeclarationSpecifierAType() {
   case tok::kw_half:
   case tok::kw_float:
   case tok::kw_double:
+  case tok::kw__Float16:
   case tok::kw___float128:
   case tok::kw_void:
   case tok::kw___unknown_anytype:

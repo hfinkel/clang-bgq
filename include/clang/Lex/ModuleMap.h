@@ -26,6 +26,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/TinyPtrVector.h"
 #include "llvm/ADT/Twine.h"
 #include <algorithm>
 #include <memory>
@@ -81,22 +82,26 @@ class ModuleMap {
   
   /// \brief The directory used for Clang-supplied, builtin include headers,
   /// such as "stdint.h".
-  const DirectoryEntry *BuiltinIncludeDir;
+  const DirectoryEntry *BuiltinIncludeDir = nullptr;
   
   /// \brief Language options used to parse the module map itself.
   ///
   /// These are always simple C language options.
   LangOptions MMapLangOpts;
 
-  // The module that the main source file is associated with (the module
-  // named LangOpts::CurrentModule, if we've loaded it).
-  Module *SourceModule;
+  /// The module that the main source file is associated with (the module
+  /// named LangOpts::CurrentModule, if we've loaded it).
+  Module *SourceModule = nullptr;
+
+  /// The global module for the current TU, if we still own it. (Ownership is
+  /// transferred if/when we create an enclosing module.
+  std::unique_ptr<Module> PendingGlobalModule;
 
   /// \brief The top-level modules that are known.
   llvm::StringMap<Module *> Modules;
 
   /// \brief The number of modules we have created in total.
-  unsigned NumCreatedModules;
+  unsigned NumCreatedModules = 0;
 
 public:
   /// \brief Flags describing the role of a module header.
@@ -115,6 +120,11 @@ public:
     // Adjust the HeaderFileInfoTrait::EmitData streaming.
     // Adjust ModuleMap::addHeader.
   };
+
+  /// Convert a header kind to a role. Requires Kind to not be HK_Excluded.
+  static ModuleHeaderRole headerKindToRole(Module::HeaderKind Kind);
+  /// Convert a header role to a kind.
+  static Module::HeaderKind headerRoleToKind(ModuleHeaderRole Role);
 
   /// \brief A header that is known to reside within a given module,
   /// whether it was included or excluded.
@@ -165,7 +175,13 @@ private:
   /// \brief Mapping from each header to the module that owns the contents of
   /// that header.
   HeadersMap Headers;
-  
+
+  /// Map from file sizes to modules with lazy header directives of that size.
+  mutable llvm::DenseMap<off_t, llvm::TinyPtrVector<Module*>> LazyHeadersBySize;
+  /// Map from mtimes to modules with lazy header directives with those mtimes.
+  mutable llvm::DenseMap<time_t, llvm::TinyPtrVector<Module*>>
+              LazyHeadersByModTime;
+
   /// \brief Mapping from directories with umbrella headers to the module
   /// that is generated from the umbrella header.
   ///
@@ -257,22 +273,30 @@ private:
   /// resolved.
   Module *resolveModuleId(const ModuleId &Id, Module *Mod, bool Complain) const;
 
-  /// Resolve the given header directive to an actual header file.
+  /// Add an unresolved header to a module.
+  void addUnresolvedHeader(Module *Mod,
+                           Module::UnresolvedHeaderDirective Header);
+
+  /// Look up the given header directive to find an actual header file.
   ///
   /// \param M The module in which we're resolving the header directive.
   /// \param Header The header directive to resolve.
   /// \param RelativePathName Filled in with the relative path name from the
   ///        module to the resolved header.
   /// \return The resolved file, if any.
-  const FileEntry *resolveHeader(Module *M,
-                                 Module::UnresolvedHeaderDirective Header,
-                                 SmallVectorImpl<char> &RelativePathName);
+  const FileEntry *findHeader(Module *M,
+                              const Module::UnresolvedHeaderDirective &Header,
+                              SmallVectorImpl<char> &RelativePathName);
+
+  /// Resolve the given header directive.
+  void resolveHeader(Module *M,
+                     const Module::UnresolvedHeaderDirective &Header);
 
   /// Attempt to resolve the specified header directive as naming a builtin
   /// header.
-  const FileEntry *
-  resolveAsBuiltinHeader(Module *M, Module::UnresolvedHeaderDirective Header,
-                         SmallVectorImpl<char> &BuiltinPathName);
+  /// \return \c true if a corresponding builtin header was found.
+  bool resolveAsBuiltinHeader(Module *M,
+                              const Module::UnresolvedHeaderDirective &Header);
 
   /// \brief Looks up the modules that \p File corresponds to.
   ///
@@ -368,6 +392,15 @@ public:
   /// the preferred module for the header.
   ArrayRef<KnownHeader> findAllModulesForHeader(const FileEntry *File) const;
 
+  /// Resolve all lazy header directives for the specified file.
+  ///
+  /// This ensures that the HeaderFileInfo on HeaderSearch is up to date. This
+  /// is effectively internal, but is exposed so HeaderSearch can call it.
+  void resolveHeaderDirectives(const FileEntry *File) const;
+
+  /// Resolve all lazy header directives for the specified module.
+  void resolveHeaderDirectives(Module *Mod) const;
+
   /// \brief Reports errors if a module must not include a specific file.
   ///
   /// \param RequestingModule The module including a file.
@@ -443,6 +476,14 @@ public:
                                                bool IsFramework,
                                                bool IsExplicit);
 
+  /// \brief Create a 'global module' for a C++ Modules TS module interface
+  /// unit.
+  ///
+  /// We model the global module as a submodule of the module interface unit.
+  /// Unfortunately, we can't create the module interface unit's Module until
+  /// later, because we don't know what it will be called.
+  Module *createGlobalModuleForInterfaceUnit(SourceLocation Loc);
+
   /// \brief Create a new module for a C++ Modules TS module interface unit.
   /// The module must not already exist, and will be configured for the current
   /// compilation.
@@ -450,7 +491,8 @@ public:
   /// Note that this also sets the current module to the newly-created module.
   ///
   /// \returns The newly-created module.
-  Module *createModuleForInterfaceUnit(SourceLocation Loc, StringRef Name);
+  Module *createModuleForInterfaceUnit(SourceLocation Loc, StringRef Name,
+                                       Module *GlobalModule);
 
   /// \brief Infer the contents of a framework module map from the given
   /// framework directory.

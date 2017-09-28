@@ -255,6 +255,22 @@ def test_is_virtual_method():
     assert foo.is_virtual_method()
     assert not bar.is_virtual_method()
 
+def test_is_scoped_enum():
+    """Ensure Cursor.is_scoped_enum works."""
+    source = 'class X {}; enum RegularEnum {}; enum class ScopedEnum {};'
+    tu = get_tu(source, lang='cpp')
+
+    cls = get_cursor(tu, 'X')
+    regular_enum = get_cursor(tu, 'RegularEnum')
+    scoped_enum = get_cursor(tu, 'ScopedEnum')
+    assert cls is not None
+    assert regular_enum is not None
+    assert scoped_enum is not None
+
+    assert not cls.is_scoped_enum()
+    assert not regular_enum.is_scoped_enum()
+    assert scoped_enum.is_scoped_enum()
+
 def test_underlying_type():
     tu = get_tu('typedef int foo;')
     typedef = get_cursor(tu, 'foo')
@@ -378,6 +394,28 @@ def test_get_tokens():
     assert len(tokens) == 6
     assert tokens[0].spelling == 'int'
     assert tokens[1].spelling == 'foo'
+
+def test_get_token_cursor():
+    """Ensure we can map tokens to cursors."""
+    tu = get_tu('class A {}; int foo(A var = A());', lang='cpp')
+    foo = get_cursor(tu, 'foo')
+
+    for cursor in foo.walk_preorder():
+        if cursor.kind.is_expression() and not cursor.kind.is_statement():
+            break
+    else:
+        assert False, "Could not find default value expression"
+
+    tokens = list(cursor.get_tokens())
+    assert len(tokens) == 4, [t.spelling for t in tokens]
+    assert tokens[0].spelling == '='
+    assert tokens[1].spelling == 'A'
+    assert tokens[2].spelling == '('
+    assert tokens[3].spelling == ')'
+    t_cursor = tokens[1].cursor
+    assert t_cursor.kind == CursorKind.TYPE_REF
+    r_cursor = t_cursor.referenced # should not raise an exception
+    assert r_cursor.kind == CursorKind.CLASS_DECL
 
 def test_get_arguments():
     tu = get_tu('void foo(int i, int j);')

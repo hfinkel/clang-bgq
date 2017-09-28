@@ -166,6 +166,7 @@ class Parser : public CodeCompletionHandler {
   std::unique_ptr<PragmaHandler> FPContractHandler;
   std::unique_ptr<PragmaHandler> OpenCLExtensionHandler;
   std::unique_ptr<PragmaHandler> OpenMPHandler;
+  std::unique_ptr<PragmaHandler> PCSectionHandler;
   std::unique_ptr<PragmaHandler> MSCommentHandler;
   std::unique_ptr<PragmaHandler> MSDetectMismatchHandler;
   std::unique_ptr<PragmaHandler> MSPointersToMembers;
@@ -252,6 +253,10 @@ class Parser : public CodeCompletionHandler {
   /// be NULL.
   bool ParsingInObjCContainer;
 
+  /// Whether to skip parsing of function bodies.
+  ///
+  /// This option can be used, for example, to speed up searches for
+  /// declarations/definitions when indexing.
   bool SkipFunctionBodies;
 
   /// The location of the expression statement that is being parsed right now.
@@ -603,7 +608,7 @@ public:
   }
 
   /// getTypeAnnotation - Read a parsed type out of an annotation token.
-  static ParsedType getTypeAnnotation(Token &Tok) {
+  static ParsedType getTypeAnnotation(const Token &Tok) {
     return ParsedType::getFromOpaquePtr(Tok.getAnnotationValue());
   }
 
@@ -614,7 +619,7 @@ private:
 
   /// \brief Read an already-translated primary expression out of an annotation
   /// token.
-  static ExprResult getExprAnnotation(Token &Tok) {
+  static ExprResult getExprAnnotation(const Token &Tok) {
     return ExprResult::getFromOpaquePointer(Tok.getAnnotationValue());
   }
 
@@ -1460,7 +1465,8 @@ public:
   };
 
   ExprResult ParseExpression(TypeCastState isTypeCast = NotTypeCast);
-  ExprResult ParseConstantExpressionInExprEvalContext(TypeCastState isTypeCast);
+  ExprResult ParseConstantExpressionInExprEvalContext(
+      TypeCastState isTypeCast = NotTypeCast);
   ExprResult ParseConstantExpression(TypeCastState isTypeCast = NotTypeCast);
   ExprResult ParseConstraintExpression();
   // Expr that doesn't include commas.
@@ -1515,9 +1521,10 @@ private:
   typedef SmallVector<SourceLocation, 20> CommaLocsTy;
 
   /// ParseExpressionList - Used for C/C++ (argument-)expression-list.
-  bool ParseExpressionList(SmallVectorImpl<Expr *> &Exprs,
-                           SmallVectorImpl<SourceLocation> &CommaLocs,
-                           std::function<void()> Completer = nullptr);
+  bool ParseExpressionList(
+      SmallVectorImpl<Expr *> &Exprs,
+      SmallVectorImpl<SourceLocation> &CommaLocs,
+      llvm::function_ref<void()> Completer = llvm::function_ref<void()>());
 
   /// ParseSimpleExpressionList - A simple comma-separated list of expressions,
   /// used for misc language extensions.
@@ -1850,6 +1857,7 @@ private:
     DSC_trailing, // C++11 trailing-type-specifier in a trailing return type
     DSC_alias_declaration, // C++11 type-specifier-seq in an alias-declaration
     DSC_top_level, // top-level/namespace declaration context
+    DSC_template_param, // template parameter context
     DSC_template_type_arg, // template type argument context
     DSC_objc_method_result, // ObjC method result context, enables 'instancetype'
     DSC_condition // condition declaration context
@@ -1860,6 +1868,7 @@ private:
   static bool isTypeSpecifier(DeclSpecContext DSC) {
     switch (DSC) {
     case DSC_normal:
+    case DSC_template_param:
     case DSC_class:
     case DSC_top_level:
     case DSC_objc_method_result:
@@ -1880,6 +1889,7 @@ private:
   static bool isClassTemplateDeductionContext(DeclSpecContext DSC) {
     switch (DSC) {
     case DSC_normal:
+    case DSC_template_param:
     case DSC_class:
     case DSC_top_level:
     case DSC_condition:
@@ -2603,6 +2613,9 @@ private:
       Decl *TagDecl = nullptr);
   /// \brief Parse 'omp declare reduction' construct.
   DeclGroupPtrTy ParseOpenMPDeclareReductionDirective(AccessSpecifier AS);
+  /// Parses initializer for provided omp_priv declaration inside the reduction
+  /// initializer.
+  void ParseOpenMPReductionInitializerForDecl(VarDecl *OmpPrivParm);
 
   /// \brief Parses simple list of variables.
   ///
@@ -2715,11 +2728,11 @@ private:
                                        AccessSpecifier AS=AS_none,
                                        AttributeList *AccessAttrs = nullptr);
   bool ParseTemplateParameters(unsigned Depth,
-                               SmallVectorImpl<Decl*> &TemplateParams,
+                               SmallVectorImpl<NamedDecl *> &TemplateParams,
                                SourceLocation &LAngleLoc,
                                SourceLocation &RAngleLoc);
   bool ParseTemplateParameterList(unsigned Depth,
-                                  SmallVectorImpl<Decl*> &TemplateParams);
+                                  SmallVectorImpl<NamedDecl*> &TemplateParams);
   bool isStartOfTemplateTypeParameter();
   Decl *ParseTemplateParameter(unsigned Depth, unsigned Position);
   Decl *ParseTypeParameter(unsigned Depth, unsigned Position);

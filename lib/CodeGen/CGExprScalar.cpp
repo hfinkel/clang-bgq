@@ -30,6 +30,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
@@ -44,6 +45,43 @@ using llvm::Value;
 //===----------------------------------------------------------------------===//
 
 namespace {
+
+/// Determine whether the given binary operation may overflow.
+/// Sets \p Result to the value of the operation for BO_Add, BO_Sub, BO_Mul,
+/// and signed BO_{Div,Rem}. For these opcodes, and for unsigned BO_{Div,Rem},
+/// the returned overflow check is precise. The returned value is 'true' for
+/// all other opcodes, to be conservative.
+bool mayHaveIntegerOverflow(llvm::ConstantInt *LHS, llvm::ConstantInt *RHS,
+                             BinaryOperator::Opcode Opcode, bool Signed,
+                             llvm::APInt &Result) {
+  // Assume overflow is possible, unless we can prove otherwise.
+  bool Overflow = true;
+  const auto &LHSAP = LHS->getValue();
+  const auto &RHSAP = RHS->getValue();
+  if (Opcode == BO_Add) {
+    if (Signed)
+      Result = LHSAP.sadd_ov(RHSAP, Overflow);
+    else
+      Result = LHSAP.uadd_ov(RHSAP, Overflow);
+  } else if (Opcode == BO_Sub) {
+    if (Signed)
+      Result = LHSAP.ssub_ov(RHSAP, Overflow);
+    else
+      Result = LHSAP.usub_ov(RHSAP, Overflow);
+  } else if (Opcode == BO_Mul) {
+    if (Signed)
+      Result = LHSAP.smul_ov(RHSAP, Overflow);
+    else
+      Result = LHSAP.umul_ov(RHSAP, Overflow);
+  } else if (Opcode == BO_Div || Opcode == BO_Rem) {
+    if (Signed && !RHS->isZero())
+      Result = LHSAP.sdiv_ov(RHSAP, Overflow);
+    else
+      return false;
+  }
+  return Overflow;
+}
+
 struct BinOpInfo {
   Value *LHS;
   Value *RHS;
@@ -55,37 +93,14 @@ struct BinOpInfo {
   /// Check if the binop can result in integer overflow.
   bool mayHaveIntegerOverflow() const {
     // Without constant input, we can't rule out overflow.
-    const auto *LHSCI = dyn_cast<llvm::ConstantInt>(LHS);
-    const auto *RHSCI = dyn_cast<llvm::ConstantInt>(RHS);
+    auto *LHSCI = dyn_cast<llvm::ConstantInt>(LHS);
+    auto *RHSCI = dyn_cast<llvm::ConstantInt>(RHS);
     if (!LHSCI || !RHSCI)
       return true;
 
-    // Assume overflow is possible, unless we can prove otherwise.
-    bool Overflow = true;
-    const auto &LHSAP = LHSCI->getValue();
-    const auto &RHSAP = RHSCI->getValue();
-    if (Opcode == BO_Add) {
-      if (Ty->hasSignedIntegerRepresentation())
-        (void)LHSAP.sadd_ov(RHSAP, Overflow);
-      else
-        (void)LHSAP.uadd_ov(RHSAP, Overflow);
-    } else if (Opcode == BO_Sub) {
-      if (Ty->hasSignedIntegerRepresentation())
-        (void)LHSAP.ssub_ov(RHSAP, Overflow);
-      else
-        (void)LHSAP.usub_ov(RHSAP, Overflow);
-    } else if (Opcode == BO_Mul) {
-      if (Ty->hasSignedIntegerRepresentation())
-        (void)LHSAP.smul_ov(RHSAP, Overflow);
-      else
-        (void)LHSAP.umul_ov(RHSAP, Overflow);
-    } else if (Opcode == BO_Div || Opcode == BO_Rem) {
-      if (Ty->hasSignedIntegerRepresentation() && !RHSCI->isZero())
-        (void)LHSAP.sdiv_ov(RHSAP, Overflow);
-      else
-        return false;
-    }
-    return Overflow;
+    llvm::APInt Result;
+    return ::mayHaveIntegerOverflow(
+        LHSCI, RHSCI, Opcode, Ty->hasSignedIntegerRepresentation(), Result);
   }
 
   /// Check if the binop computes a division or a remainder.
@@ -413,14 +428,19 @@ public:
     return CGF.getOpaqueRValueMapping(E).getScalarVal();
   }
 
+  Value *emitConstant(const CodeGenFunction::ConstantEmission &Constant,
+                      Expr *E) {
+    assert(Constant && "not a constant");
+    if (Constant.isReference())
+      return EmitLoadOfLValue(Constant.getReferenceLValue(CGF, E),
+                              E->getExprLoc());
+    return Constant.getValue();
+  }
+
   // l-values.
   Value *VisitDeclRefExpr(DeclRefExpr *E) {
-    if (CodeGenFunction::ConstantEmission result = CGF.tryEmitAsConstant(E)) {
-      if (result.isReference())
-        return EmitLoadOfLValue(result.getReferenceLValue(CGF, E),
-                                E->getExprLoc());
-      return result.getValue();
-    }
+    if (CodeGenFunction::ConstantEmission Constant = CGF.tryEmitAsConstant(E))
+      return emitConstant(Constant, E);
     return EmitLoadOfLValue(E);
   }
 
@@ -994,10 +1014,42 @@ Value *ScalarExprEmitter::EmitScalarConversion(Value *Src, QualType SrcType,
     return Builder.CreateVectorSplat(NumElements, Src, "splat");
   }
 
-  // Allow bitcast from vector to integer/fp of the same size.
-  if (isa<llvm::VectorType>(SrcTy) ||
-      isa<llvm::VectorType>(DstTy))
-    return Builder.CreateBitCast(Src, DstTy, "conv");
+  if (isa<llvm::VectorType>(SrcTy) || isa<llvm::VectorType>(DstTy)) {
+    // Allow bitcast from vector to integer/fp of the same size.
+    unsigned SrcSize = SrcTy->getPrimitiveSizeInBits();
+    unsigned DstSize = DstTy->getPrimitiveSizeInBits();
+    if (SrcSize == DstSize)
+      return Builder.CreateBitCast(Src, DstTy, "conv");
+
+    // Conversions between vectors of different sizes are not allowed except
+    // when vectors of half are involved. Operations on storage-only half
+    // vectors require promoting half vector operands to float vectors and
+    // truncating the result, which is either an int or float vector, to a
+    // short or half vector.
+
+    // Source and destination are both expected to be vectors.
+    llvm::Type *SrcElementTy = SrcTy->getVectorElementType();
+    llvm::Type *DstElementTy = DstTy->getVectorElementType();
+    (void)DstElementTy;
+
+    assert(((SrcElementTy->isIntegerTy() &&
+             DstElementTy->isIntegerTy()) ||
+            (SrcElementTy->isFloatingPointTy() &&
+             DstElementTy->isFloatingPointTy())) &&
+           "unexpected conversion between a floating-point vector and an "
+           "integer vector");
+
+    // Truncate an i32 vector to an i16 vector.
+    if (SrcElementTy->isIntegerTy())
+      return Builder.CreateIntCast(Src, DstTy, false, "conv");
+
+    // Truncate a float vector to a half vector.
+    if (SrcSize > DstSize)
+      return Builder.CreateFPTrunc(Src, DstTy, "conv");
+
+    // Promote a half vector to a float vector.
+    return Builder.CreateFPExt(Src, DstTy, "conv");
+  }
 
   // Finally, we have the arithmetic types: real int/float.
   Value *Res = nullptr;
@@ -1284,13 +1336,15 @@ Value *ScalarExprEmitter::VisitConvertVectorExpr(ConvertVectorExpr *E) {
 }
 
 Value *ScalarExprEmitter::VisitMemberExpr(MemberExpr *E) {
-  llvm::APSInt Value;
-  if (E->EvaluateAsInt(Value, CGF.getContext(), Expr::SE_AllowSideEffects)) {
-    if (E->isArrow())
-      CGF.EmitScalarExpr(E->getBase());
-    else
-      EmitLValue(E->getBase());
-    return Builder.getInt(Value);
+  if (CodeGenFunction::ConstantEmission Constant = CGF.tryEmitAsConstant(E)) {
+    CGF.EmitIgnoredExpr(E->getBase());
+    return emitConstant(Constant, E);
+  } else {
+    llvm::APSInt Value;
+    if (E->EvaluateAsInt(Value, CGF.getContext(), Expr::SE_AllowSideEffects)) {
+      CGF.EmitIgnoredExpr(E->getBase());
+      return Builder.getInt(Value);
+    }
   }
 
   return EmitLoadOfLValue(E);
@@ -1836,6 +1890,7 @@ ScalarExprEmitter::EmitScalarPrePostIncDec(const UnaryOperator *E, LValue LV,
   llvm::Value *input;
 
   int amount = (isInc ? 1 : -1);
+  bool isSubtraction = !isInc;
 
   if (const AtomicType *atomicTy = type->getAs<AtomicType>()) {
     type = atomicTy->getValueType();
@@ -1925,7 +1980,9 @@ ScalarExprEmitter::EmitScalarPrePostIncDec(const UnaryOperator *E, LValue LV,
       if (CGF.getLangOpts().isSignedOverflowDefined())
         value = Builder.CreateGEP(value, numElts, "vla.inc");
       else
-        value = Builder.CreateInBoundsGEP(value, numElts, "vla.inc");
+        value = CGF.EmitCheckedInBoundsGEP(
+            value, numElts, /*SignedIndices=*/false, isSubtraction,
+            E->getExprLoc(), "vla.inc");
 
     // Arithmetic on function pointers (!) is just +-1.
     } else if (type->isFunctionType()) {
@@ -1935,7 +1992,9 @@ ScalarExprEmitter::EmitScalarPrePostIncDec(const UnaryOperator *E, LValue LV,
       if (CGF.getLangOpts().isSignedOverflowDefined())
         value = Builder.CreateGEP(value, amt, "incdec.funcptr");
       else
-        value = Builder.CreateInBoundsGEP(value, amt, "incdec.funcptr");
+        value = CGF.EmitCheckedInBoundsGEP(value, amt, /*SignedIndices=*/false,
+                                           isSubtraction, E->getExprLoc(),
+                                           "incdec.funcptr");
       value = Builder.CreateBitCast(value, input->getType());
 
     // For everything else, we can just do a simple increment.
@@ -1944,7 +2003,9 @@ ScalarExprEmitter::EmitScalarPrePostIncDec(const UnaryOperator *E, LValue LV,
       if (CGF.getLangOpts().isSignedOverflowDefined())
         value = Builder.CreateGEP(value, amt, "incdec.ptr");
       else
-        value = Builder.CreateInBoundsGEP(value, amt, "incdec.ptr");
+        value = CGF.EmitCheckedInBoundsGEP(value, amt, /*SignedIndices=*/false,
+                                           isSubtraction, E->getExprLoc(),
+                                           "incdec.ptr");
     }
 
   // Vector increment/decrement.
@@ -2025,7 +2086,9 @@ ScalarExprEmitter::EmitScalarPrePostIncDec(const UnaryOperator *E, LValue LV,
     if (CGF.getLangOpts().isSignedOverflowDefined())
       value = Builder.CreateGEP(value, sizeValue, "incdec.objptr");
     else
-      value = Builder.CreateInBoundsGEP(value, sizeValue, "incdec.objptr");
+      value = CGF.EmitCheckedInBoundsGEP(value, sizeValue,
+                                         /*SignedIndices=*/false, isSubtraction,
+                                         E->getExprLoc(), "incdec.objptr");
     value = Builder.CreateBitCast(value, input->getType());
   }
 
@@ -2642,13 +2705,38 @@ static Value *emitPointerArithmetic(CodeGenFunction &CGF,
     std::swap(pointerOperand, indexOperand);
   }
 
+  bool isSigned = indexOperand->getType()->isSignedIntegerOrEnumerationType();
+
   unsigned width = cast<llvm::IntegerType>(index->getType())->getBitWidth();
   auto &DL = CGF.CGM.getDataLayout();
   auto PtrTy = cast<llvm::PointerType>(pointer->getType());
+
+  // Some versions of glibc and gcc use idioms (particularly in their malloc
+  // routines) that add a pointer-sized integer (known to be a pointer value)
+  // to a null pointer in order to cast the value back to an integer or as
+  // part of a pointer alignment algorithm.  This is undefined behavior, but
+  // we'd like to be able to compile programs that use it.
+  //
+  // Normally, we'd generate a GEP with a null-pointer base here in response
+  // to that code, but it's also UB to dereference a pointer created that
+  // way.  Instead (as an acknowledged hack to tolerate the idiom) we will
+  // generate a direct cast of the integer value to a pointer.
+  //
+  // The idiom (p = nullptr + N) is not met if any of the following are true:
+  //
+  //   The operation is subtraction.
+  //   The index is not pointer-sized.
+  //   The pointer type is not byte-sized.
+  //
+  if (BinaryOperator::isNullPointerArithmeticExtension(CGF.getContext(),
+                                                       op.Opcode,
+                                                       expr->getLHS(), 
+                                                       expr->getRHS()))
+    return CGF.Builder.CreateIntToPtr(index, pointer->getType());
+
   if (width != DL.getTypeSizeInBits(PtrTy)) {
     // Zero-extend or sign-extend the pointer value according to
     // whether the index is signed or not.
-    bool isSigned = indexOperand->getType()->isSignedIntegerOrEnumerationType();
     index = CGF.Builder.CreateIntCast(index, DL.getIntPtrType(PtrTy), isSigned,
                                       "idx.ext");
   }
@@ -2692,7 +2780,9 @@ static Value *emitPointerArithmetic(CodeGenFunction &CGF,
       pointer = CGF.Builder.CreateGEP(pointer, index, "add.ptr");
     } else {
       index = CGF.Builder.CreateNSWMul(index, numElements, "vla.index");
-      pointer = CGF.Builder.CreateInBoundsGEP(pointer, index, "add.ptr");
+      pointer =
+          CGF.EmitCheckedInBoundsGEP(pointer, index, isSigned, isSubtraction,
+                                     op.E->getExprLoc(), "add.ptr");
     }
     return pointer;
   }
@@ -2709,7 +2799,8 @@ static Value *emitPointerArithmetic(CodeGenFunction &CGF,
   if (CGF.getLangOpts().isSignedOverflowDefined())
     return CGF.Builder.CreateGEP(pointer, index, "add.ptr");
 
-  return CGF.Builder.CreateInBoundsGEP(pointer, index, "add.ptr");
+  return CGF.EmitCheckedInBoundsGEP(pointer, index, isSigned, isSubtraction,
+                                    op.E->getExprLoc(), "add.ptr");
 }
 
 // Construct an fmuladd intrinsic to represent a fused mul-add of MulOp and
@@ -2782,7 +2873,7 @@ static Value* tryEmitFMulAdd(const BinOpInfo &op,
 Value *ScalarExprEmitter::EmitAdd(const BinOpInfo &op) {
   if (op.LHS->getType()->isPointerTy() ||
       op.RHS->getType()->isPointerTy())
-    return emitPointerArithmetic(CGF, op, /*subtraction*/ false);
+    return emitPointerArithmetic(CGF, op, CodeGenFunction::NotSubtraction);
 
   if (op.Ty->isSignedIntegerOrEnumerationType()) {
     switch (CGF.getLangOpts().getSignedOverflowBehavior()) {
@@ -2853,7 +2944,7 @@ Value *ScalarExprEmitter::EmitSub(const BinOpInfo &op) {
   // If the RHS is not a pointer, then we have normal pointer
   // arithmetic.
   if (!op.RHS->getType()->isPointerTy())
-    return emitPointerArithmetic(CGF, op, /*subtraction*/ true);
+    return emitPointerArithmetic(CGF, op, CodeGenFunction::IsSubtraction);
 
   // Otherwise, this is a pointer subtraction.
 
@@ -3823,4 +3914,137 @@ LValue CodeGenFunction::EmitCompoundAssignmentLValue(
   }
 
   llvm_unreachable("Unhandled compound assignment operator");
+}
+
+Value *CodeGenFunction::EmitCheckedInBoundsGEP(Value *Ptr,
+                                               ArrayRef<Value *> IdxList,
+                                               bool SignedIndices,
+                                               bool IsSubtraction,
+                                               SourceLocation Loc,
+                                               const Twine &Name) {
+  Value *GEPVal = Builder.CreateInBoundsGEP(Ptr, IdxList, Name);
+
+  // If the pointer overflow sanitizer isn't enabled, do nothing.
+  if (!SanOpts.has(SanitizerKind::PointerOverflow))
+    return GEPVal;
+
+  // If the GEP has already been reduced to a constant, leave it be.
+  if (isa<llvm::Constant>(GEPVal))
+    return GEPVal;
+
+  // Only check for overflows in the default address space.
+  if (GEPVal->getType()->getPointerAddressSpace())
+    return GEPVal;
+
+  auto *GEP = cast<llvm::GEPOperator>(GEPVal);
+  assert(GEP->isInBounds() && "Expected inbounds GEP");
+
+  SanitizerScope SanScope(this);
+  auto &VMContext = getLLVMContext();
+  const auto &DL = CGM.getDataLayout();
+  auto *IntPtrTy = DL.getIntPtrType(GEP->getPointerOperandType());
+
+  // Grab references to the signed add/mul overflow intrinsics for intptr_t.
+  auto *Zero = llvm::ConstantInt::getNullValue(IntPtrTy);
+  auto *SAddIntrinsic =
+      CGM.getIntrinsic(llvm::Intrinsic::sadd_with_overflow, IntPtrTy);
+  auto *SMulIntrinsic =
+      CGM.getIntrinsic(llvm::Intrinsic::smul_with_overflow, IntPtrTy);
+
+  // The total (signed) byte offset for the GEP.
+  llvm::Value *TotalOffset = nullptr;
+  // The offset overflow flag - true if the total offset overflows.
+  llvm::Value *OffsetOverflows = Builder.getFalse();
+
+  /// Return the result of the given binary operation.
+  auto eval = [&](BinaryOperator::Opcode Opcode, llvm::Value *LHS,
+                  llvm::Value *RHS) -> llvm::Value * {
+    assert((Opcode == BO_Add || Opcode == BO_Mul) && "Can't eval binop");
+
+    // If the operands are constants, return a constant result.
+    if (auto *LHSCI = dyn_cast<llvm::ConstantInt>(LHS)) {
+      if (auto *RHSCI = dyn_cast<llvm::ConstantInt>(RHS)) {
+        llvm::APInt N;
+        bool HasOverflow = mayHaveIntegerOverflow(LHSCI, RHSCI, Opcode,
+                                                  /*Signed=*/true, N);
+        if (HasOverflow)
+          OffsetOverflows = Builder.getTrue();
+        return llvm::ConstantInt::get(VMContext, N);
+      }
+    }
+
+    // Otherwise, compute the result with checked arithmetic.
+    auto *ResultAndOverflow = Builder.CreateCall(
+        (Opcode == BO_Add) ? SAddIntrinsic : SMulIntrinsic, {LHS, RHS});
+    OffsetOverflows = Builder.CreateOr(
+        Builder.CreateExtractValue(ResultAndOverflow, 1), OffsetOverflows);
+    return Builder.CreateExtractValue(ResultAndOverflow, 0);
+  };
+
+  // Determine the total byte offset by looking at each GEP operand.
+  for (auto GTI = llvm::gep_type_begin(GEP), GTE = llvm::gep_type_end(GEP);
+       GTI != GTE; ++GTI) {
+    llvm::Value *LocalOffset;
+    auto *Index = GTI.getOperand();
+    // Compute the local offset contributed by this indexing step:
+    if (auto *STy = GTI.getStructTypeOrNull()) {
+      // For struct indexing, the local offset is the byte position of the
+      // specified field.
+      unsigned FieldNo = cast<llvm::ConstantInt>(Index)->getZExtValue();
+      LocalOffset = llvm::ConstantInt::get(
+          IntPtrTy, DL.getStructLayout(STy)->getElementOffset(FieldNo));
+    } else {
+      // Otherwise this is array-like indexing. The local offset is the index
+      // multiplied by the element size.
+      auto *ElementSize = llvm::ConstantInt::get(
+          IntPtrTy, DL.getTypeAllocSize(GTI.getIndexedType()));
+      auto *IndexS = Builder.CreateIntCast(Index, IntPtrTy, /*isSigned=*/true);
+      LocalOffset = eval(BO_Mul, ElementSize, IndexS);
+    }
+
+    // If this is the first offset, set it as the total offset. Otherwise, add
+    // the local offset into the running total.
+    if (!TotalOffset || TotalOffset == Zero)
+      TotalOffset = LocalOffset;
+    else
+      TotalOffset = eval(BO_Add, TotalOffset, LocalOffset);
+  }
+
+  // Common case: if the total offset is zero, don't emit a check.
+  if (TotalOffset == Zero)
+    return GEPVal;
+
+  // Now that we've computed the total offset, add it to the base pointer (with
+  // wrapping semantics).
+  auto *IntPtr = Builder.CreatePtrToInt(GEP->getPointerOperand(), IntPtrTy);
+  auto *ComputedGEP = Builder.CreateAdd(IntPtr, TotalOffset);
+
+  // The GEP is valid if:
+  // 1) The total offset doesn't overflow, and
+  // 2) The sign of the difference between the computed address and the base
+  // pointer matches the sign of the total offset.
+  llvm::Value *ValidGEP;
+  auto *NoOffsetOverflow = Builder.CreateNot(OffsetOverflows);
+  if (SignedIndices) {
+    auto *PosOrZeroValid = Builder.CreateICmpUGE(ComputedGEP, IntPtr);
+    auto *PosOrZeroOffset = Builder.CreateICmpSGE(TotalOffset, Zero);
+    llvm::Value *NegValid = Builder.CreateICmpULT(ComputedGEP, IntPtr);
+    ValidGEP = Builder.CreateAnd(
+        Builder.CreateSelect(PosOrZeroOffset, PosOrZeroValid, NegValid),
+        NoOffsetOverflow);
+  } else if (!SignedIndices && !IsSubtraction) {
+    auto *PosOrZeroValid = Builder.CreateICmpUGE(ComputedGEP, IntPtr);
+    ValidGEP = Builder.CreateAnd(PosOrZeroValid, NoOffsetOverflow);
+  } else {
+    auto *NegOrZeroValid = Builder.CreateICmpULE(ComputedGEP, IntPtr);
+    ValidGEP = Builder.CreateAnd(NegOrZeroValid, NoOffsetOverflow);
+  }
+
+  llvm::Constant *StaticArgs[] = {EmitCheckSourceLocation(Loc)};
+  // Pass the computed GEP to the runtime to avoid emitting poisoned arguments.
+  llvm::Value *DynamicArgs[] = {IntPtr, ComputedGEP};
+  EmitCheck(std::make_pair(ValidGEP, SanitizerKind::PointerOverflow),
+            SanitizerHandler::PointerOverflow, StaticArgs, DynamicArgs);
+
+  return GEPVal;
 }

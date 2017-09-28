@@ -128,21 +128,24 @@ void HeaderSearch::getHeaderMapFileNames(
     Names.push_back(HM.first->getName());
 }
 
-std::string HeaderSearch::getModuleFileName(Module *Module) {
+std::string HeaderSearch::getCachedModuleFileName(Module *Module) {
   const FileEntry *ModuleMap =
       getModuleMap().getModuleMapFileForUniquing(Module);
-  return getModuleFileName(Module->Name, ModuleMap->getName(),
-                           /*UsePrebuiltPath*/false);
+  return getCachedModuleFileName(Module->Name, ModuleMap->getName());
 }
 
-std::string HeaderSearch::getModuleFileName(StringRef ModuleName,
-                                            StringRef ModuleMapPath,
-                                            bool UsePrebuiltPath) {
-  if (UsePrebuiltPath) {
-    if (HSOpts->PrebuiltModulePaths.empty())
+std::string HeaderSearch::getPrebuiltModuleFileName(StringRef ModuleName,
+                                                    bool FileMapOnly) {
+  // First check the module name to pcm file map.
+  auto i (HSOpts->PrebuiltModuleFiles.find(ModuleName));
+  if (i != HSOpts->PrebuiltModuleFiles.end())
+    return i->second;
+
+  if (FileMapOnly || HSOpts->PrebuiltModulePaths.empty())
       return std::string();
 
-    // Go though each prebuilt module path and try to find the pcm file.
+  // Then go through each prebuilt module directory and try to find the pcm
+  // file.
     for (const std::string &Dir : HSOpts->PrebuiltModulePaths) {
       SmallString<256> Result(Dir);
       llvm::sys::fs::make_absolute(Result);
@@ -154,6 +157,8 @@ std::string HeaderSearch::getModuleFileName(StringRef ModuleName,
     return std::string();
   }
 
+std::string HeaderSearch::getCachedModuleFileName(StringRef ModuleName,
+                                                  StringRef ModuleMapPath) {
   // If we don't have a module cache path or aren't supposed to use one, we
   // can't do anything.
   if (getModuleCachePath().empty())
@@ -1114,6 +1119,8 @@ bool HeaderSearch::ShouldEnterIncludeFile(Preprocessor &PP,
   auto TryEnterImported = [&](void) -> bool {
     if (!ModulesEnabled)
       return false;
+    // Ensure FileInfo bits are up to date.
+    ModMap.resolveHeaderDirectives(File);
     // Modules with builtins are special; multiple modules use builtins as
     // modular headers, example:
     //
@@ -1326,14 +1333,27 @@ static const FileEntry *getPrivateModuleMap(const FileEntry *File,
 }
 
 bool HeaderSearch::loadModuleMapFile(const FileEntry *File, bool IsSystem,
-                                     FileID ID, unsigned *Offset) {
+                                     FileID ID, unsigned *Offset,
+                                     StringRef OriginalModuleMapFile) {
   // Find the directory for the module. For frameworks, that may require going
   // up from the 'Modules' directory.
   const DirectoryEntry *Dir = nullptr;
   if (getHeaderSearchOpts().ModuleMapFileHomeIsCwd)
     Dir = FileMgr.getDirectory(".");
   else {
-    Dir = File->getDir();
+    if (!OriginalModuleMapFile.empty()) {
+      // We're building a preprocessed module map. Find or invent the directory
+      // that it originally occupied.
+      Dir = FileMgr.getDirectory(
+          llvm::sys::path::parent_path(OriginalModuleMapFile));
+      if (!Dir) {
+        auto *FakeFile = FileMgr.getVirtualFile(OriginalModuleMapFile, 0, 0);
+        Dir = FakeFile->getDir();
+      }
+    } else {
+      Dir = File->getDir();
+    }
+
     StringRef DirName(Dir->getName());
     if (llvm::sys::path::filename(DirName) == "Modules") {
       DirName = llvm::sys::path::parent_path(DirName);

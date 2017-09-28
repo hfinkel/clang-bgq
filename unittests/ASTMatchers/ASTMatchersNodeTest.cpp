@@ -666,6 +666,12 @@ TEST(Matcher, IntegerLiterals) {
   EXPECT_TRUE(notMatches("int i = 'a';", HasIntLiteral));
   EXPECT_TRUE(notMatches("int i = 1e10;", HasIntLiteral));
   EXPECT_TRUE(notMatches("int i = 10.0;", HasIntLiteral));
+
+  // Negative integers.
+  EXPECT_TRUE(
+      matches("int i = -10;",
+              unaryOperator(hasOperatorName("-"),
+                            hasUnaryOperand(integerLiteral(equals(10))))));
 }
 
 TEST(Matcher, FloatLiterals) {
@@ -1178,6 +1184,10 @@ TEST(TypeMatching, MatchesAutoTypes) {
   EXPECT_TRUE(matches("int v[] = { 2, 3 }; void f() { for (int i : v) {} }",
                       autoType()));
 
+  EXPECT_TRUE(matches("auto i = 2;", varDecl(hasType(isInteger()))));
+  EXPECT_TRUE(matches("struct X{}; auto x = X{};",
+                      varDecl(hasType(recordDecl(hasName("X"))))));
+
   // FIXME: Matching against the type-as-written can't work here, because the
   //        type as written was not deduced.
   //EXPECT_TRUE(matches("auto a = 1;",
@@ -1600,6 +1610,9 @@ TEST(ObjCDeclMacher, CoreDecls) {
   EXPECT_TRUE(matchesObjC(
     ObjCString,
     objcProtocolDecl(hasName("Proto"))));
+  EXPECT_TRUE(matchesObjC(
+    ObjCString,
+    objcImplementationDecl(hasName("Thing"))));
   EXPECT_TRUE(matchesObjC(
     ObjCString,
     objcCategoryDecl(hasName("ABC"))));

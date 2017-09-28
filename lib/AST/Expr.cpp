@@ -1576,6 +1576,7 @@ bool CastExpr::CastConsistency() const {
            getSubExpr()->getType()->isBlockPointerType());
     assert(getType()->getPointeeType().getAddressSpace() !=
            getSubExpr()->getType()->getPointeeType().getAddressSpace());
+    LLVM_FALLTHROUGH;
   // These should not have an inheritance path.
   case CK_Dynamic:
   case CK_ToUnion:
@@ -1640,25 +1641,32 @@ const char *CastExpr::getCastKindName() const {
   llvm_unreachable("Unhandled cast kind!");
 }
 
+namespace {
+  Expr *skipImplicitTemporary(Expr *expr) {
+    // Skip through reference binding to temporary.
+    if (MaterializeTemporaryExpr *Materialize
+                                  = dyn_cast<MaterializeTemporaryExpr>(expr))
+      expr = Materialize->GetTemporaryExpr();
+
+    // Skip any temporary bindings; they're implicit.
+    if (CXXBindTemporaryExpr *Binder = dyn_cast<CXXBindTemporaryExpr>(expr))
+      expr = Binder->getSubExpr();
+
+    return expr;
+  }
+}
+
 Expr *CastExpr::getSubExprAsWritten() {
   Expr *SubExpr = nullptr;
   CastExpr *E = this;
   do {
-    SubExpr = E->getSubExpr();
+    SubExpr = skipImplicitTemporary(E->getSubExpr());
 
-    // Skip through reference binding to temporary.
-    if (MaterializeTemporaryExpr *Materialize 
-                                  = dyn_cast<MaterializeTemporaryExpr>(SubExpr))
-      SubExpr = Materialize->GetTemporaryExpr();
-        
-    // Skip any temporary bindings; they're implicit.
-    if (CXXBindTemporaryExpr *Binder = dyn_cast<CXXBindTemporaryExpr>(SubExpr))
-      SubExpr = Binder->getSubExpr();
-    
     // Conversions by constructor and conversion functions have a
     // subexpression describing the call; strip it off.
     if (E->getCastKind() == CK_ConstructorConversion)
-      SubExpr = cast<CXXConstructExpr>(SubExpr)->getArg(0);
+      SubExpr =
+        skipImplicitTemporary(cast<CXXConstructExpr>(SubExpr)->getArg(0));
     else if (E->getCastKind() == CK_UserDefinedConversion) {
       assert((isa<CXXMemberCallExpr>(SubExpr) ||
               isa<BlockExpr>(SubExpr)) &&
@@ -1685,6 +1693,26 @@ CXXBaseSpecifier **CastExpr::path_buffer() {
   default:
     llvm_unreachable("non-cast expressions not possible here");
   }
+}
+
+const FieldDecl *CastExpr::getTargetFieldForToUnionCast(QualType unionType,
+                                                        QualType opType) {
+  auto RD = unionType->castAs<RecordType>()->getDecl();
+  return getTargetFieldForToUnionCast(RD, opType);
+}
+
+const FieldDecl *CastExpr::getTargetFieldForToUnionCast(const RecordDecl *RD,
+                                                        QualType OpType) {
+  auto &Ctx = RD->getASTContext();
+  RecordDecl::field_iterator Field, FieldEnd;
+  for (Field = RD->field_begin(), FieldEnd = RD->field_end();
+       Field != FieldEnd; ++Field) {
+    if (Ctx.hasSameUnqualifiedType(Field->getType(), OpType) &&
+        !Field->isUnnamedBitfield()) {
+      return *Field;
+    }
+  }
+  return nullptr;
 }
 
 ImplicitCastExpr *ImplicitCastExpr::Create(const ASTContext &C, QualType T,
@@ -1801,6 +1829,38 @@ OverloadedOperatorKind BinaryOperator::getOverloadedOperator(Opcode Opc) {
   return OverOps[Opc];
 }
 
+bool BinaryOperator::isNullPointerArithmeticExtension(ASTContext &Ctx,
+                                                      Opcode Opc,
+                                                      Expr *LHS, Expr *RHS) {
+  if (Opc != BO_Add)
+    return false;
+
+  // Check that we have one pointer and one integer operand.
+  Expr *PExp;
+  if (LHS->getType()->isPointerType()) {
+    if (!RHS->getType()->isIntegerType())
+      return false;
+    PExp = LHS;
+  } else if (RHS->getType()->isPointerType()) {
+    if (!LHS->getType()->isIntegerType())
+      return false;
+    PExp = RHS;
+  } else {
+    return false;
+  }
+
+  // Check that the pointer is a nullptr.
+  if (!PExp->IgnoreParenCasts()
+          ->isNullPointerConstant(Ctx, Expr::NPC_ValueDependentIsNotNull))
+    return false;
+
+  // Check that the pointee type is char-sized.
+  const PointerType *PTy = PExp->getType()->getAs<PointerType>();
+  if (!PTy || !PTy->getPointeeType()->isCharType())
+    return false;
+
+  return true;
+}
 InitListExpr::InitListExpr(const ASTContext &C, SourceLocation lbraceloc,
                            ArrayRef<Expr*> initExprs, SourceLocation rbraceloc)
   : Expr(InitListExprClass, QualType(), VK_RValue, OK_Ordinary, false, false,
@@ -2102,6 +2162,7 @@ bool Expr::isUnusedResultAWarning(const Expr *&WarnE, SourceLocation &Loc,
     }
 
     // Fallthrough for generic call handling.
+    LLVM_FALLTHROUGH;
   }
   case CallExprClass:
   case CXXMemberCallExprClass:
@@ -3929,10 +3990,12 @@ AtomicExpr::AtomicExpr(SourceLocation BLoc, ArrayRef<Expr*> args,
 unsigned AtomicExpr::getNumSubExprs(AtomicOp Op) {
   switch (Op) {
   case AO__c11_atomic_init:
+  case AO__opencl_atomic_init:
   case AO__c11_atomic_load:
   case AO__atomic_load_n:
     return 2;
 
+  case AO__opencl_atomic_load:
   case AO__c11_atomic_store:
   case AO__c11_atomic_exchange:
   case AO__atomic_load:
@@ -3958,6 +4021,15 @@ unsigned AtomicExpr::getNumSubExprs(AtomicOp Op) {
   case AO__atomic_nand_fetch:
     return 3;
 
+  case AO__opencl_atomic_store:
+  case AO__opencl_atomic_exchange:
+  case AO__opencl_atomic_fetch_add:
+  case AO__opencl_atomic_fetch_sub:
+  case AO__opencl_atomic_fetch_and:
+  case AO__opencl_atomic_fetch_or:
+  case AO__opencl_atomic_fetch_xor:
+  case AO__opencl_atomic_fetch_min:
+  case AO__opencl_atomic_fetch_max:
   case AO__atomic_exchange:
     return 4;
 
@@ -3965,11 +4037,20 @@ unsigned AtomicExpr::getNumSubExprs(AtomicOp Op) {
   case AO__c11_atomic_compare_exchange_weak:
     return 5;
 
+  case AO__opencl_atomic_compare_exchange_strong:
+  case AO__opencl_atomic_compare_exchange_weak:
   case AO__atomic_compare_exchange:
   case AO__atomic_compare_exchange_n:
     return 6;
   }
   llvm_unreachable("unknown atomic op");
+}
+
+QualType AtomicExpr::getValueType() const {
+  auto T = getPtr()->getType()->castAs<PointerType>()->getPointeeType();
+  if (auto AT = T->getAs<AtomicType>())
+    return AT->getValueType();
+  return T;
 }
 
 QualType OMPArraySectionExpr::getBaseOriginalType(const Expr *Base) {
